@@ -31,7 +31,7 @@ export function scoreDex(venue: DexVenue, maxVolumeUsd: number, maxLiquidityUsd:
   );
 }
 
-export class DexRegistry {
+export class DexScoringRegistry {
   private venues = new Map<string, DexVenue>();
 
   upsert(venue: DexVenue): void {
