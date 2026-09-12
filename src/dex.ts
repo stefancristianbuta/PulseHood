@@ -56,11 +56,10 @@ export class DexScoringRegistry {
   }
 }
 
+// Only deployments with verified Robinhood Chain addresses are included by default.
 export const INITIAL_DEX_IDS = [
   'uniswap-v3',
   'uniswap-v4',
   'pons-v2',
   'ramses-v3',
-  'up-v3',
-  'uniswap-v2',
 ] as const;
