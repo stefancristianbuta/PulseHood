@@ -7,8 +7,8 @@
   "scripts": {
     "build": "tsc --noEmit",
     "test": "node --test --import tsx src/**/*.test.ts",
-    "dev": "tsx src/index.ts",
-    "start": "tsx src/index.ts"
+    "dev": "tsx src/bootstrap.ts",
+    "start": "tsx src/bootstrap.ts"
   },
   "dependencies": {
     "viem": "^2.37.0"
