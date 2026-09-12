@@ -62,7 +62,7 @@ export class RadarIngest {
     ];
 
     for (const { log, protocol, abi } of logs) {
-      if (log.address === undefined || log.transactionHash === null || log.logIndex === undefined) continue;
+      if (log.transactionHash === null || log.logIndex === undefined) continue;
       const pool = log.address.toLowerCase();
       let tokens = this.poolTokens.get(pool);
       if (tokens === undefined) {
@@ -85,19 +85,25 @@ export class RadarIngest {
         ? args.sender as `0x${string}`
         : undefined;
 
-      const normalized = normalizeSwapEvent(
-        {
-          status: 'decoded',
-          protocol,
-          eventName: 'Swap',
-          args,
-          transactionHash: log.transactionHash,
-          logIndex: Number(log.logIndex),
-          reason: undefined,
-        },
-        { address: log.address, token0: tokens.token0, token1: tokens.token1, targetToken },
-      );
-      if (normalized.status === 'normalized') swaps.push({ ...normalized, trader });
+      const event: Parameters<typeof normalizeSwapEvent>[0] = {
+        status: 'decoded',
+        address: log.address,
+        protocol,
+        eventName: 'Swap',
+        args,
+        transactionHash: log.transactionHash,
+        logIndex: Number(log.logIndex),
+      };
+
+      const normalized = normalizeSwapEvent(event, {
+        address: log.address,
+        token0: tokens.token0,
+        token1: tokens.token1,
+        targetToken,
+      });
+      if (normalized.status === 'normalized') {
+        swaps.push(trader === undefined ? normalized : { ...normalized, trader });
+      }
     }
 
     this.lastBlock = toBlock;
