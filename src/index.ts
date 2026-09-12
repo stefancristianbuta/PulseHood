@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { loadConfig } from './config.js';
 import { WebSocketChainFeed } from './chain-feed.js';
 import { calculateMomentum } from './momentum.js';
@@ -38,19 +39,6 @@ async function main(): Promise<void> {
     payload: { chainId: config.chainId, rpcChainId, tradingMode: config.tradingMode },
   });
 
-  console.log(JSON.stringify({
-    app: 'PulseHood',
-    chainId: config.chainId,
-    tradingMode: config.tradingMode,
-    liveEnabled: config.liveEnabled,
-    rpcEndpoints: config.rpcUrls.length,
-    wsEndpoints: config.wsUrls.length,
-    momentum,
-    risk,
-    rpcChainId,
-    rpcStatus: rpc.getStatus(),
-  }, null, 2));
-
   if (config.tradingMode !== 'paper' || config.liveEnabled) {
     throw new Error('Deploy safety gate: only paper mode is permitted in this V1 runtime');
   }
@@ -77,6 +65,42 @@ async function main(): Promise<void> {
 
   startFeed();
 
+  const server = createServer((req, res) => {
+    if (req.url === '/health' || req.url === '/api/status') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({
+        app: 'PulseHood',
+        status: 'ok',
+        chainId: config.chainId,
+        tradingMode: config.tradingMode,
+        liveEnabled: config.liveEnabled,
+        latestBlock: latestBlock?.toString() ?? null,
+        rpcStatus: rpc.getStatus(),
+      }));
+      return;
+    }
+
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>PulseHood</title></head><body><main><h1>PulseHood</h1><p>Robinhood Chain momentum radar</p><p>Status: <strong>ONLINE</strong></p><p>Mode: <strong>${config.tradingMode.toUpperCase()}</strong></p><p>Chain: <strong>${config.chainId}</strong></p><p>Latest block: <strong>${latestBlock?.toString() ?? 'waiting'}</strong></p></main></body></html>`);
+  });
+
+  const port = Number(process.env.PORT ?? 10000);
+  server.listen(port, '0.0.0.0', () => {
+    console.log(JSON.stringify({
+      app: 'PulseHood',
+      chainId: config.chainId,
+      tradingMode: config.tradingMode,
+      liveEnabled: config.liveEnabled,
+      rpcEndpoints: config.rpcUrls.length,
+      wsEndpoints: config.wsUrls.length,
+      momentum,
+      risk,
+      rpcChainId,
+      rpcStatus: rpc.getStatus(),
+      httpPort: port,
+    }, null, 2));
+  });
+
   const heartbeat = setInterval(() => {
     telemetry.emitEvent({
       correlationId: TelemetryBus.correlationId('HEARTBEAT'),
@@ -95,6 +119,7 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     clearInterval(heartbeat);
     for (const feed of feeds) feed.stop();
+    server.close();
     console.log('PulseHood shutdown complete');
   };
 
