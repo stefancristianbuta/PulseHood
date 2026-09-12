@@ -35,15 +35,16 @@ interface WindowState {
   buyers: Set<string>;
   sellers: Set<string>;
   lastPriceUsd: number | undefined;
-  previousVolumeUsd: number;
-  previousUniqueBuyers: number;
+  previousVolumeUsd: number | undefined;
+  previousUniqueBuyers: number | undefined;
 }
 
 function windowStart(timestampMs: number, windowMs: number): number {
   return Math.floor(timestampMs / windowMs) * windowMs;
 }
 
-function pctChange(current: number, previous: number): number {
+function pctChange(current: number, previous: number | undefined): number {
+  if (previous === undefined) return 0;
   if (previous <= 0) return current > 0 ? 100 : 0;
   return ((current - previous) / previous) * 100;
 }
@@ -76,8 +77,8 @@ export class FlowEngine {
         buyers: new Set(),
         sellers: new Set(),
         lastPriceUsd: undefined,
-        previousVolumeUsd: state?.buyVolumeUsd !== undefined ? state.buyVolumeUsd + state.sellVolumeUsd : 0,
-        previousUniqueBuyers: state?.buyers.size ?? 0,
+        previousVolumeUsd: state?.buyVolumeUsd !== undefined ? state.buyVolumeUsd + state.sellVolumeUsd : undefined,
+        previousUniqueBuyers: state?.buyers.size,
       };
       this.windows.set(key, state);
     }
@@ -96,8 +97,7 @@ export class FlowEngine {
     }
 
     const volumeUsd = state.buyVolumeUsd + state.sellVolumeUsd;
-    const total = volumeUsd;
-    const buyPressurePct = total > 0 ? (state.buyVolumeUsd / total) * 100 : 0;
+    const buyPressurePct = volumeUsd > 0 ? (state.buyVolumeUsd / volumeUsd) * 100 : 0;
     const uniqueBuyerDeltaPct = pctChange(state.buyers.size, state.previousUniqueBuyers);
     const volumeAccelerationPct = pctChange(volumeUsd, state.previousVolumeUsd);
     const priceChangePct = previousPriceUsd === undefined ? 0 : pctChange(input.priceUsd, previousPriceUsd);
