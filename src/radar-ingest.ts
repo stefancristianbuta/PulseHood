@@ -25,7 +25,7 @@ interface PoolTokens {
   token1: `0x${string}`;
 }
 
-interface RadarIngestResult {
+export interface RadarIngestResult {
   swaps: NormalizedSwap[];
   fromBlock: bigint;
   toBlock: bigint;
@@ -47,7 +47,6 @@ export class RadarIngest {
     const fromBlock = this.lastBlock === undefined
       ? (toBlock > maxRange ? toBlock - maxRange + 1n : 0n)
       : this.lastBlock + 1n;
-
     if (fromBlock > toBlock) return undefined;
 
     const boundedFrom = toBlock - fromBlock + 1n > maxRange ? toBlock - maxRange + 1n : fromBlock;
@@ -57,7 +56,12 @@ export class RadarIngest {
     ]);
 
     const swaps: NormalizedSwap[] = [];
-    for (const log of [...v2Logs, ...v3Logs]) {
+    const logs = [
+      ...v2Logs.map((log) => ({ log, protocol: 'uniswap-v2' as const, abi: V2_SWAP })),
+      ...v3Logs.map((log) => ({ log, protocol: 'uniswap-v3' as const, abi: V3_SWAP })),
+    ];
+
+    for (const { log, protocol, abi } of logs) {
       if (log.address === undefined || log.transactionHash === null || log.logIndex === undefined) continue;
       const pool = log.address.toLowerCase();
       let tokens = this.poolTokens.get(pool);
@@ -75,36 +79,29 @@ export class RadarIngest {
       if (token0IsQuote === token1IsQuote) continue;
 
       const targetToken = token0IsQuote ? tokens.token1 : tokens.token0;
-      const event = 'args' in log ? log : log;
-      const decoded = log.address.toLowerCase() === pool
-        ? decodeEventLog({
-            abi: v2Logs.some((candidate) => candidate.transactionHash === log.transactionHash && candidate.logIndex === log.logIndex) ? V2_SWAP : V3_SWAP,
-            topics: log.topics,
-            data: log.data,
-          })
+      const decoded = decodeEventLog({ abi, topics: log.topics, data: log.data });
+      const args = decoded.args as Record<string, unknown>;
+      const trader = typeof args.sender === 'string' && /^0x[0-9a-fA-F]{40}$/.test(args.sender)
+        ? args.sender as `0x${string}`
         : undefined;
-      if (decoded === undefined) continue;
 
       const normalized = normalizeSwapEvent(
         {
           status: 'decoded',
-          protocol: v2Logs.some((candidate) => candidate.transactionHash === log.transactionHash && candidate.logIndex === log.logIndex) ? 'uniswap-v2' : 'uniswap-v3',
+          protocol,
           eventName: 'Swap',
-          args: decoded.args as Record<string, unknown>,
+          args,
           transactionHash: log.transactionHash,
           logIndex: Number(log.logIndex),
           reason: undefined,
         },
         { address: log.address, token0: tokens.token0, token1: tokens.token1, targetToken },
       );
-      if (normalized.status === 'normalized') swaps.push(normalized);
+      if (normalized.status === 'normalized') swaps.push({ ...normalized, trader });
     }
 
     this.lastBlock = toBlock;
-    if (swaps.length > 0) {
-      this.recentSwaps = [...this.recentSwaps, ...swaps].slice(-this.maxRecentSwaps);
-    }
-
+    if (swaps.length > 0) this.recentSwaps = [...this.recentSwaps, ...swaps].slice(-this.maxRecentSwaps);
     return { swaps, fromBlock: boundedFrom, toBlock };
   }
 
