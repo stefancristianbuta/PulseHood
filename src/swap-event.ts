@@ -37,6 +37,10 @@ function integer(value: unknown): bigint | undefined {
   return undefined;
 }
 
+function isNamedArgs(value: readonly unknown[] | Record<string, unknown> | undefined): value is Record<string, unknown> {
+  return value !== undefined && !Array.isArray(value);
+}
+
 function baseSwap(pool: PoolDescriptor, direction: SwapDirection, quoteToken: `0x${string}` | undefined, amountIn: bigint | undefined, amountOut: bigint | undefined): NormalizedSwap {
   return {
     status: 'normalized',
@@ -138,8 +142,7 @@ export function normalizeSwapEvent(event: DecodedEvent, pool: PoolDescriptor): N
     };
   }
 
-  const args = event.args;
-  if (args === undefined || Array.isArray(args)) {
+  if (!isNamedArgs(event.args)) {
     return {
       status: 'unsupported',
       protocol: event.protocol,
@@ -157,7 +160,7 @@ export function normalizeSwapEvent(event: DecodedEvent, pool: PoolDescriptor): N
   }
 
   const normalized = event.eventName === 'Swap'
-    ? directSwap(args, pool) ?? uniswapV2Swap(args, pool) ?? uniswapV3Swap(args, pool)
+    ? directSwap(event.args, pool) ?? uniswapV2Swap(event.args, pool) ?? uniswapV3Swap(event.args, pool)
     : undefined;
 
   if (normalized === undefined) {
