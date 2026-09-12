@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { encodeFunctionData, encodeEventTopics, parseAbi, toHex } from 'viem';
+import { encodeFunctionData, encodeEventTopics, parseAbi, toHex, type Hex } from 'viem';
 import { test } from 'node:test';
 import {
   AbiRegistry,
@@ -64,16 +64,17 @@ test('decodes a registered event log', () => {
   registry.register({ address: router, protocol: 'test-dex', abi });
   const decoder = new EventDecoder(registry);
 
-  const topics = encodeEventTopics({
+  const encodedTopics = encodeEventTopics({
     abi,
     eventName: 'Swap',
     args: { sender, tokenIn, tokenOut },
   });
+  const topics = encodedTopics.filter((topic): topic is Hex => topic !== null);
 
   const log: LogEnvelope = {
     address: router,
     data: `0x${'00'.repeat(64)}`,
-    topics: [...topics],
+    topics,
     blockNumber: 100n,
     transactionHash: txHash,
     logIndex: 0,
