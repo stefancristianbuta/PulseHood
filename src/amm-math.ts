@@ -27,10 +27,7 @@ export function quoteConstantProduct(
   const amountOut = reserveOut * amountInAfterFee / (reserveIn + amountInAfterFee);
   if (amountOut <= 0n || amountOut >= reserveOut) throw new Error('quote has no executable output');
 
-  const spotNumerator = reserveOut * amountIn;
-  const spotDenominator = reserveIn;
-  const executionNumerator = amountOut;
-  const spotOutput = spotNumerator / spotDenominator;
+  const spotOutput = reserveOut * amountIn / reserveIn;
   const priceImpactBps = spotOutput > 0n
     ? Number((spotOutput - amountOut) * 10_000n / spotOutput)
     : 10_000;
