@@ -80,12 +80,22 @@ export class RpcManager {
   }
 
   getClient(): PublicClient<Transport> {
-    const ranked = [...this.endpoints]
+    const healthy = [...this.endpoints]
       .filter((endpoint) => endpoint.healthy)
       .sort((a, b) => a.latencyMs - b.latencyMs);
-    const best = ranked[0];
-    if (best === undefined) throw new Error('No healthy RPC endpoint available');
-    return best.client;
+    const bestHealthy = healthy[0];
+    if (bestHealthy !== undefined) return bestHealthy.client;
+
+    // Public RPCs can be temporarily slower than the latency policy while still
+    // serving a current chain head. Prefer a live/degraded endpoint over treating
+    // the whole radar as offline; latency remains visible in telemetry/status.
+    const degraded = [...this.endpoints]
+      .filter((endpoint) => endpoint.blockNumber !== undefined && endpoint.failures === 0)
+      .sort((a, b) => a.latencyMs - b.latencyMs);
+    const bestDegraded = degraded[0];
+    if (bestDegraded !== undefined) return bestDegraded.client;
+
+    throw new Error('No live RPC endpoint available');
   }
 
   getStatus() {
