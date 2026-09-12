@@ -56,7 +56,7 @@ export class WebSocketChainFeed {
           correlationId: TelemetryBus.correlationId('BLOCK'),
           module: 'chain-feed',
           event: 'block',
-          block: block.number.toString(),
+          block: block.number,
           latencyMs: performance.now() - started,
           status: 'ok',
           payload: {
