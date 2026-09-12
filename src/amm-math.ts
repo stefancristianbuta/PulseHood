@@ -28,9 +28,11 @@ export function quoteConstantProduct(
   const amountOut = reserveOut * amountInAfterFee / (reserveIn + amountInAfterFee);
   if (amountOut <= 0n || amountOut >= reserveOut) throw new Error('quote has no executable output');
 
-  const spotOutput = reserveOut * amountIn / reserveIn;
-  const priceImpactBps = spotOutput > 0n
-    ? Number((spotOutput - amountOut) * 10_000n / spotOutput)
+  // Price impact measures only the AMM curve impact. The protocol fee is
+  // accounted for separately through feeAmount and must not be double-counted.
+  const noImpactOutput = reserveOut * amountInAfterFee / reserveIn;
+  const priceImpactBps = noImpactOutput > 0n
+    ? Number((noImpactOutput - amountOut) * 10_000n / noImpactOutput)
     : 10_000;
 
   return {
