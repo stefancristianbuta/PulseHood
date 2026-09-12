@@ -4,6 +4,7 @@ import {
   type Abi,
   type Hex,
 } from 'viem';
+import type { AbiEvent } from 'viem';
 
 export interface TransactionEnvelope {
   hash: Hex;
@@ -140,10 +141,11 @@ export class EventDecoder {
     }
 
     try {
+      const topics = [...log.topics] as [Hex, ...Hex[]];
       const decoded = decodeEventLog({
         abi: registration.abi,
         data: log.data,
-        topics: [...log.topics],
+        topics,
       });
       const result: DecodedEvent = {
         status: 'decoded',
