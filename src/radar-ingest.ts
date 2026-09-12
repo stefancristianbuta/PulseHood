@@ -35,21 +35,40 @@ export class RadarIngest {
 
   private async seedPools(): Promise<void> {
     if (this.seeded) return;
+    // Always seed the verified V3 pools first. V2 factory discovery is deliberately
+    // bounded and sequential: the public RPC is rate-limited and an unbounded
+    // Promise.all fan-out can exhaust the 512 MB Render free-tier instance.
+    for (const pool of VERIFIED_ACTIVE_V3_POOLS) this.addPool(pool, 'uniswap-v3');
+    console.log(JSON.stringify({ event: 'pool_seed_v3_verified', selectedPools: VERIFIED_ACTIVE_V3_POOLS.length }));
+
     try {
       const length = await this.client.readContract({ address: V2_FACTORY, abi: V2_FACTORY_ABI, functionName: 'allPairsLength' });
       const total = Number(length);
-      const start = Math.max(0, total - 150);
-      const indexes = Array.from({ length: total - start }, (_, i) => BigInt(start + i));
-      const pairs = await Promise.all(indexes.map((index) => this.client.readContract({ address: V2_FACTORY, abi: V2_FACTORY_ABI, functionName: 'allPairs', args: [index] })));
-      const tokenPairs = await Promise.all(pairs.map(async (pair) => { try { const [token0, token1] = await Promise.all([this.client.readContract({ address: pair as `0x${string}`, abi: V2_PAIR_ABI, functionName: 'token0' }), this.client.readContract({ address: pair as `0x${string}`, abi: V2_PAIR_ABI, functionName: 'token1' })]); return { pair: pair as `0x${string}`, token0: token0 as `0x${string}`, token1: token1 as `0x${string}` }; } catch { return undefined; } }));
-      const quotePairs = tokenPairs.filter((pair): pair is { pair: `0x${string}`; token0: `0x${string}`; token1: `0x${string}` } => pair !== undefined && isQuote(pair.token0) !== isQuote(pair.token1));
-      const selectedPairs = quotePairs.slice(-10);
-      for (const pair of selectedPairs) { this.addPool(pair.pair, 'uniswap-v2'); this.poolTokens.set(pair.pair.toLowerCase(), { token0: pair.token0, token1: pair.token1 }); }
-      console.log(JSON.stringify({ event: 'pool_seed_v2', totalPairs: total, inspectedPairs: pairs.length, quotePairs: quotePairs.length, selectedPools: selectedPairs.length }));
-    } catch (error) { console.warn(JSON.stringify({ event: 'pool_seed_v2_error', message: error instanceof Error ? error.message : String(error) })); }
-    for (const pool of VERIFIED_ACTIVE_V3_POOLS) this.addPool(pool, 'uniswap-v3');
+      const start = Math.max(0, total - 20);
+      const selected: Array<{ pair: `0x${string}`; token0: `0x${string}`; token1: `0x${string}` }> = [];
+      for (let index = start; index < total; index += 1) {
+        try {
+          const pair = await this.client.readContract({ address: V2_FACTORY, abi: V2_FACTORY_ABI, functionName: 'allPairs', args: [BigInt(index)] }) as `0x${string}`;
+          const [token0, token1] = await Promise.all([
+            this.client.readContract({ address: pair, abi: V2_PAIR_ABI, functionName: 'token0' }),
+            this.client.readContract({ address: pair, abi: V2_PAIR_ABI, functionName: 'token1' }),
+          ]);
+          if (isQuote(token0 as `0x${string}`) !== isQuote(token1 as `0x${string}`)) {
+            selected.push({ pair, token0: token0 as `0x${string}`, token1: token1 as `0x${string}` });
+          }
+        } catch (error) {
+          console.warn(JSON.stringify({ event: 'pool_seed_v2_pair_error', index, message: error instanceof Error ? error.message : String(error) }));
+        }
+      }
+      for (const pair of selected.slice(-10)) {
+        this.addPool(pair.pair, 'uniswap-v2');
+        this.poolTokens.set(pair.pair.toLowerCase(), { token0: pair.token0, token1: pair.token1 });
+      }
+      console.log(JSON.stringify({ event: 'pool_seed_v2', totalPairs: total, inspectedPairs: Math.max(0, total - start), quotePairs: selected.length, selectedPools: Math.min(10, selected.length) }));
+    } catch (error) {
+      console.warn(JSON.stringify({ event: 'pool_seed_v2_error', message: error instanceof Error ? error.message : String(error) }));
+    }
     this.seeded = true;
-    console.log(JSON.stringify({ event: 'pool_seed_v3_verified', selectedPools: VERIFIED_ACTIVE_V3_POOLS.length }));
   }
 
   private async tick(): Promise<void> {
