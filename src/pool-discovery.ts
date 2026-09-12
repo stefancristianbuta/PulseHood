@@ -4,7 +4,8 @@ import type { DexDeployment, DexProtocol } from './dex-registry.js';
 export interface DiscoveredPool {
   dexId: string;
   protocol: DexProtocol;
-  pool: `0x${string}`;
+  pool?: `0x${string}`;
+  poolId?: `0x${string}`;
   token0: `0x${string}`;
   token1: `0x${string}`;
   fee?: number;
@@ -29,28 +30,38 @@ export function supportedPoolDiscovery(protocol: DexProtocol): boolean {
   return protocol === 'uniswap-v2' || protocol === 'uniswap-v3' || protocol === 'uniswap-v4';
 }
 
+function withLogMetadata(
+  base: Omit<DiscoveredPool, 'blockNumber' | 'transactionHash'>,
+  log: { blockNumber?: bigint; transactionHash?: `0x${string}` },
+): DiscoveredPool {
+  const result: DiscoveredPool = { ...base };
+  if (log.blockNumber !== undefined) result.blockNumber = log.blockNumber;
+  if (log.transactionHash !== undefined) result.transactionHash = log.transactionHash;
+  return result;
+}
+
 export function decodePoolCreationLog(
   deployment: DexDeployment,
   log: { topics: readonly `0x${string}`[]; data: `0x${string}`; blockNumber?: bigint; transactionHash?: `0x${string}` },
 ): DiscoveredPool {
+  const topics = [...log.topics] as `0x${string}`[];
+
   if (deployment.protocol === 'uniswap-v2') {
-    const decoded = decodeEventLog({ abi: V2_PAIR_CREATED, topics: log.topics, data: log.data });
+    const decoded = decodeEventLog({ abi: V2_PAIR_CREATED, topics, data: log.data });
     const { token0, token1, pair } = decoded.args;
-    return {
+    return withLogMetadata({
       dexId: deployment.id,
       protocol: deployment.protocol,
-      pool,
+      pool: pair,
       token0,
       token1,
-      blockNumber: log.blockNumber,
-      transactionHash: log.transactionHash,
-    };
+    }, log);
   }
 
   if (deployment.protocol === 'uniswap-v3') {
-    const decoded = decodeEventLog({ abi: V3_POOL_CREATED, topics: log.topics, data: log.data });
+    const decoded = decodeEventLog({ abi: V3_POOL_CREATED, topics, data: log.data });
     const { token0, token1, fee, tickSpacing, pool } = decoded.args;
-    return {
+    return withLogMetadata({
       dexId: deployment.id,
       protocol: deployment.protocol,
       pool,
@@ -58,25 +69,21 @@ export function decodePoolCreationLog(
       token1,
       fee,
       tickSpacing,
-      blockNumber: log.blockNumber,
-      transactionHash: log.transactionHash,
-    };
+    }, log);
   }
 
   if (deployment.protocol === 'uniswap-v4') {
-    const decoded = decodeEventLog({ abi: V4_INITIALIZE, topics: log.topics, data: log.data });
-    const { currency0, currency1, fee, tickSpacing } = decoded.args;
-    return {
+    const decoded = decodeEventLog({ abi: V4_INITIALIZE, topics, data: log.data });
+    const { currency0, currency1, fee, tickSpacing, id } = decoded.args;
+    return withLogMetadata({
       dexId: deployment.id,
       protocol: deployment.protocol,
-      pool: decoded.args.id as `0x${string}`,
+      poolId: id,
       token0: currency0,
       token1: currency1,
       fee,
       tickSpacing,
-      blockNumber: log.blockNumber,
-      transactionHash: log.transactionHash,
-    };
+    }, log);
   }
 
   throw new Error(`Pool discovery is not verified for protocol: ${deployment.protocol}`);
