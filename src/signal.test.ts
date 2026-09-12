@@ -18,7 +18,7 @@ function flow(overrides: Partial<FlowSnapshot> = {}): FlowSnapshot {
     uniqueBuyers: 12,
     uniqueSellers: 4,
     uniqueBuyerDeltaPct: 50,
-    volumeAccelerationPct: 40,
+    volumeAccelerationPct: 60,
     priceUsd: 1.4,
     previousPriceUsd: 1.2,
     priceChangePct: 16.67,
