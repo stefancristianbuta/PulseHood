@@ -41,8 +41,8 @@ export class PaperExecutionEngine implements ExecutionEngine {
     const gasEth = Number(order.quote.gasEstimate * order.quote.gasPriceWei) / 1e18;
     const gasUsd = gasEth * order.quote.nativeTokenUsd;
     const dexFeeUsd = Math.max(0, order.quote.dexFeeUsd);
+    const slippageUsd = Math.max(0, order.quote.slippageUsd);
     const priceImpactUsd = Math.max(0, order.quote.priceImpactUsd);
-    const slippageUsd = Math.max(0, order.amountUsd - order.quote.expectedAmountOutUsd);
     const cost: PaperCost = {
       dexFeeUsd,
       gasUsd,
@@ -54,7 +54,7 @@ export class PaperExecutionEngine implements ExecutionEngine {
     const fill: PaperFill = {
       side: order.side,
       requestedUsd: order.amountUsd,
-      executedUsd: Math.max(0, order.quote.expectedAmountOutUsd - priceImpactUsd),
+      executedUsd: Math.max(0, order.quote.expectedAmountOutUsd - cost.totalUsd),
       executionPriceUsd: order.quote.executablePriceUsd,
       cost,
       timestamp: Date.now(),
