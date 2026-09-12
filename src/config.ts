@@ -1,12 +1,26 @@
+import { defineChain } from 'viem';
 import type { TradingMode } from './domain.js';
 
-export const CHAIN = {
+export const CHAIN = defineChain({
   id: 4663,
   name: 'Robinhood Chain',
-  nativeSymbol: 'ETH',
-  rpcPublic: 'https://rpc.mainnet.chain.robinhood.com',
-  sequencerFeedPublic: 'wss://feed.mainnet.chain.robinhood.com',
-} as const;
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: ['https://rpc.mainnet.chain.robinhood.com'],
+      webSocket: ['wss://feed.mainnet.chain.robinhood.com'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: 'Robinhood Blockscout',
+      url: 'https://robinhoodchain.blockscout.com',
+    },
+  },
+});
+
+export const CHAIN_RPC_PUBLIC = 'https://rpc.mainnet.chain.robinhood.com';
+export const CHAIN_SEQUENCER_FEED_PUBLIC = 'wss://feed.mainnet.chain.robinhood.com';
 
 const splitUrls = (value: string | undefined): string[] =>
   (value ?? '')
@@ -40,8 +54,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     chainId: CHAIN.id,
     tradingMode,
     liveEnabled,
-    rpcUrls: rpcUrls.length > 0 ? rpcUrls : [CHAIN.rpcPublic],
-    wsUrls: wsUrls.length > 0 ? wsUrls : [CHAIN.sequencerFeedPublic],
+    rpcUrls: rpcUrls.length > 0 ? rpcUrls : [CHAIN_RPC_PUBLIC],
+    wsUrls: wsUrls.length > 0 ? wsUrls : [CHAIN_SEQUENCER_FEED_PUBLIC],
     maxRpcLatencyMs: Number(env.MAX_RPC_LATENCY_MS ?? 750),
     maxBlockLag: Number(env.MAX_BLOCK_LAG ?? 3),
     paperCapitalUsd: Number(env.PAPER_CAPITAL_USD ?? 10_000),
