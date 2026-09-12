@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import test from 'node:test';
 import type { NormalizedSwap } from './swap-event.js';
 import { FlowEngine } from './flow.js';
 
@@ -36,6 +36,7 @@ test('aggregates buy pressure and unique buyers', () => {
   assert.equal(snapshot.uniqueBuyers, 2);
   assert.equal(snapshot.uniqueSellers, 1);
   assert.equal(snapshot.volumeUsd, 200);
+  assert.equal(snapshot.volumeAccelerationPct, 0);
 });
 
 test('does not count repeated buyer activity as a new unique buyer', () => {
@@ -47,9 +48,11 @@ test('does not count repeated buyer activity as a new unique buyer', () => {
   assert.ok(snapshot);
   assert.equal(snapshot.uniqueBuyers, 1);
   assert.equal(snapshot.buyVolumeUsd, 200);
+  assert.equal(snapshot.uniqueBuyerDeltaPct, 0);
+  assert.equal(snapshot.volumeAccelerationPct, 0);
 });
 
-test('starts a new one minute window', () => {
+test('starts a new one minute window and compares it with the previous window', () => {
   const engine = new FlowEngine();
   engine.process({ swap: swap('BUY'), trader: '0x0000000000000000000000000000000000004001', volumeUsd: 100, priceUsd: 1, timestampMs: 1000 });
   const snapshot = engine.process({ swap: swap('BUY'), trader: '0x0000000000000000000000000000000000004002', volumeUsd: 250, priceUsd: 1.1, timestampMs: 61_000 });
@@ -58,4 +61,5 @@ test('starts a new one minute window', () => {
   assert.equal(snapshot.volumeUsd, 250);
   assert.equal(snapshot.uniqueBuyers, 1);
   assert.equal(snapshot.volumeAccelerationPct, 150);
+  assert.equal(snapshot.uniqueBuyerDeltaPct, 0);
 });
