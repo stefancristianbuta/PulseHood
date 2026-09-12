@@ -26,6 +26,7 @@ export class RadarIngest {
   private running = false;
   private timer: NodeJS.Timeout | undefined;
   private seeded = false;
+  private scanCursor = 0;
   constructor(private readonly client: Client, private readonly maxRecentSwaps = 200) { this.start(); }
   private start(): void { if (this.running) return; this.running = true; void this.tick(); this.timer = setInterval(() => void this.tick(), 2_000); this.timer.unref(); }
   private addPool(address: `0x${string}`, protocol: PoolRef['protocol']): void { this.pools.set(address.toLowerCase(), { address, protocol }); }
@@ -73,27 +74,38 @@ export class RadarIngest {
     const boundedFrom = toBlock - fromBlock + 1n > maxRange ? toBlock - maxRange + 1n : fromBlock;
     const poolRefs = [...this.pools.values()];
     if (poolRefs.length === 0) { this.lastBlock = toBlock; return { swaps: [], fromBlock: boundedFrom, toBlock }; }
-    const addresses = poolRefs.map((pool) => pool.address);
-    const [v2Logs, v3Logs] = await Promise.all([this.client.getLogs({ address: addresses, event: V2_SWAP[0], fromBlock: boundedFrom, toBlock }), this.client.getLogs({ address: addresses, event: V3_SWAP[0], fromBlock: boundedFrom, toBlock })]);
-    const protocolByPool = new Map(poolRefs.map((pool) => [pool.address.toLowerCase(), pool.protocol]));
+
+    // Public RPC providers can reject multi-address eth_getLogs filters even when the
+    // block range is small. Scan a small rotating subset of individual pools instead.
+    const scanCount = Math.min(2, poolRefs.length);
+    const selected: PoolRef[] = [];
+    for (let i = 0; i < scanCount; i++) selected.push(poolRefs[(this.scanCursor + i) % poolRefs.length]);
+    this.scanCursor = (this.scanCursor + scanCount) % poolRefs.length;
+
+    const logResults = await Promise.all(selected.map(async (pool) => {
+      const abi = pool.protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP;
+      const logs = await this.client.getLogs({ address: pool.address, event: abi[0], fromBlock: boundedFrom, toBlock });
+      return { pool, abi, logs };
+    }));
     const swaps: NormalizedSwap[] = [];
-    const logs = [...v2Logs.map((log) => ({ log, protocol: protocolByPool.get(log.address.toLowerCase()) ?? 'uniswap-v2' as const, abi: V2_SWAP })), ...v3Logs.map((log) => ({ log, protocol: protocolByPool.get(log.address.toLowerCase()) ?? 'uniswap-v3' as const, abi: V3_SWAP }))];
-    for (const { log, protocol, abi } of logs) {
-      if (log.transactionHash === null || log.logIndex === undefined) continue;
-      try {
-        const pool = log.address.toLowerCase();
-        let tokens = this.poolTokens.get(pool);
-        if (tokens === undefined) { const [token0, token1] = await Promise.all([this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token0' }), this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token1' })]); tokens = { token0: token0 as `0x${string}`, token1: token1 as `0x${string}` }; this.poolTokens.set(pool, tokens); }
-        const token0IsQuote = isQuote(tokens.token0); const token1IsQuote = isQuote(tokens.token1); if (token0IsQuote === token1IsQuote) continue;
-        const targetToken = token0IsQuote ? tokens.token1 : tokens.token0;
-        const decoded = decodeEventLog({ abi, topics: log.topics, data: log.data }); const args = decoded.args as Record<string, unknown>; const trader = typeof args.sender === 'string' && /^0x[0-9a-fA-F]{40}$/.test(args.sender) ? args.sender as `0x${string}` : undefined;
-        const event: Parameters<typeof normalizeSwapEvent>[0] = { status: 'decoded', address: log.address, protocol, eventName: 'Swap', args, transactionHash: log.transactionHash, logIndex: Number(log.logIndex) };
-        const normalized = normalizeSwapEvent(event, { address: log.address, token0: tokens.token0, token1: tokens.token1, targetToken }); if (normalized.status === 'normalized') swaps.push(trader === undefined ? normalized : { ...normalized, trader });
-      } catch (error) { console.warn(JSON.stringify({ event: 'swap_log_decode_error', protocol, pool: log.address, transactionHash: log.transactionHash, logIndex: Number(log.logIndex), message: error instanceof Error ? error.message : String(error) })); }
+    for (const { pool: poolRef, abi, logs } of logResults) {
+      for (const log of logs) {
+        if (log.transactionHash === null || log.logIndex === undefined) continue;
+        try {
+          const pool = log.address.toLowerCase();
+          let tokens = this.poolTokens.get(pool);
+          if (tokens === undefined) { const [token0, token1] = await Promise.all([this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token0' }), this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token1' })]); tokens = { token0: token0 as `0x${string}`, token1: token1 as `0x${string}` }; this.poolTokens.set(pool, tokens); }
+          const token0IsQuote = isQuote(tokens.token0); const token1IsQuote = isQuote(tokens.token1); if (token0IsQuote === token1IsQuote) continue;
+          const targetToken = token0IsQuote ? tokens.token1 : tokens.token0;
+          const decoded = decodeEventLog({ abi, topics: log.topics, data: log.data }); const args = decoded.args as Record<string, unknown>; const trader = typeof args.sender === 'string' && /^0x[0-9a-fA-F]{40}$/.test(args.sender) ? args.sender as `0x${string}` : undefined;
+          const event: Parameters<typeof normalizeSwapEvent>[0] = { status: 'decoded', address: log.address, protocol: poolRef.protocol, eventName: 'Swap', args, transactionHash: log.transactionHash, logIndex: Number(log.logIndex) };
+          const normalized = normalizeSwapEvent(event, { address: log.address, token0: tokens.token0, token1: tokens.token1, targetToken }); if (normalized.status === 'normalized') swaps.push(trader === undefined ? normalized : { ...normalized, trader });
+        } catch (error) { console.warn(JSON.stringify({ event: 'swap_log_decode_error', protocol: poolRef.protocol, pool: log.address, transactionHash: log.transactionHash, logIndex: Number(log.logIndex), message: error instanceof Error ? error.message : String(error) })); }
+      }
     }
     this.lastBlock = toBlock; if (swaps.length > 0) this.recentSwaps = [...this.recentSwaps, ...swaps].slice(-this.maxRecentSwaps); return { swaps, fromBlock: boundedFrom, toBlock };
   }
   getRecentSwaps(): NormalizedSwap[] { return [...this.recentSwaps]; }
-  reset(): void { this.lastBlock = undefined; this.recentSwaps = []; this.poolTokens.clear(); this.pools.clear(); this.seeded = false; }
+  reset(): void { this.lastBlock = undefined; this.recentSwaps = []; this.poolTokens.clear(); this.pools.clear(); this.seeded = false; this.scanCursor = 0; }
   stop(): void { if (this.timer !== undefined) clearInterval(this.timer); this.timer = undefined; this.running = false; }
 }
