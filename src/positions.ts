@@ -12,6 +12,8 @@ const ALLOWED: Record<PositionState, readonly PositionState[]> = {
   CLOSED: [],
 };
 
+const ACTIVE_STATES = new Set<PositionState>(['ENTRY', 'OPEN', 'TRAILING', 'EXIT_SIGNAL']);
+
 export class PositionManager {
   private readonly positions = new Map<string, Position>();
   private entriesEnabled = true;
@@ -28,7 +30,7 @@ export class PositionManager {
 
   listOpen(): Position[] {
     return [...this.positions.values()]
-      .filter((position) => position.state !== 'CLOSED')
+      .filter((position) => ACTIVE_STATES.has(position.state))
       .map((position) => ({ ...position }));
   }
 
@@ -87,7 +89,7 @@ export class PositionManager {
     this.entriesEnabled = false;
     const closed: Position[] = [];
     for (const position of this.positions.values()) {
-      if (position.state === 'CLOSED') continue;
+      if (!ACTIVE_STATES.has(position.state)) continue;
       position.state = 'CLOSED';
       position.updatedAt = timestamp;
       closed.push({ ...position });
