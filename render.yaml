@@ -1,0 +1,17 @@
+services:
+  - type: worker
+    name: pulsehood-paper
+    runtime: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: TRADING_MODE
+        value: paper
+      - key: LIVE_ENABLED
+        value: "false"
+      - key: PAPER_CAPITAL_USD
+        value: "10000"
+      - key: MAX_RPC_LATENCY_MS
+        value: "750"
+      - key: MAX_BLOCK_LAG
+        value: "3"
