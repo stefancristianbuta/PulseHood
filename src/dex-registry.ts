@@ -69,6 +69,25 @@ function normalize(address: `0x${string}`): `0x${string}` {
   return address.toLowerCase() as `0x${string}`;
 }
 
+function normalizeDeployment(deployment: DexDeployment): DexDeployment {
+  const normalized: DexDeployment = {
+    id: deployment.id,
+    name: deployment.name,
+    protocol: deployment.protocol,
+    chainId: deployment.chainId,
+    enabled: deployment.enabled,
+    verifiedAt: deployment.verifiedAt,
+  };
+
+  if (deployment.factory !== undefined) normalized.factory = normalize(deployment.factory);
+  if (deployment.poolManager !== undefined) normalized.poolManager = normalize(deployment.poolManager);
+  if (deployment.router !== undefined) normalized.router = normalize(deployment.router);
+  if (deployment.quoter !== undefined) normalized.quoter = normalize(deployment.quoter);
+  if (deployment.hook !== undefined) normalized.hook = normalize(deployment.hook);
+
+  return normalized;
+}
+
 export class DexRegistry {
   private readonly deployments = new Map<string, DexDeployment>();
 
@@ -79,14 +98,7 @@ export class DexRegistry {
   register(deployment: DexDeployment): void {
     if (deployment.chainId !== CHAIN.id) throw new Error(`Unsupported DEX chain: ${deployment.chainId}`);
     if (!deployment.id.trim()) throw new Error('DEX deployment id is required');
-    this.deployments.set(deployment.id, {
-      ...deployment,
-      factory: deployment.factory === undefined ? undefined : normalize(deployment.factory),
-      poolManager: deployment.poolManager === undefined ? undefined : normalize(deployment.poolManager),
-      router: deployment.router === undefined ? undefined : normalize(deployment.router),
-      quoter: deployment.quoter === undefined ? undefined : normalize(deployment.quoter),
-      hook: deployment.hook === undefined ? undefined : normalize(deployment.hook),
-    });
+    this.deployments.set(deployment.id, normalizeDeployment(deployment));
   }
 
   get(id: string): DexDeployment | undefined {
