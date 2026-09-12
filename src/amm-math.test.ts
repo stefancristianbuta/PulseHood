@@ -12,6 +12,12 @@ test('constant-product quote charges fee before applying invariant', () => {
   assert.ok(quote.priceImpactBps > 0);
 });
 
+test('constant-product quote uses the configured fee exactly', () => {
+  const quote = quoteConstantProduct(1_000_000n, 10_000_000n, 20_000_000n, 100);
+  assert.equal(quote.feeAmount, 10_000n);
+  assert.equal(quote.amountOut, 1_978_218n);
+});
+
 test('rejects empty liquidity and invalid fee configuration', () => {
   assert.throws(() => quoteConstantProduct(1n, 0n, 1n), /reserves/);
   assert.throws(() => quoteConstantProduct(1n, 1n, 1n, 10_000), /feeBps/);
