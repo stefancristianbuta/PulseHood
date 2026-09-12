@@ -29,18 +29,14 @@ export class RadarIngest {
   private timer: NodeJS.Timeout | undefined;
   private seeded = false;
   private scanCursor = 0;
-  constructor(private readonly client: Client, private readonly maxRecentSwaps = 200) { this.start(); }
+  constructor(private readonly client: Client, private readonly maxRecentSwaps = 200) {}
   private start(): void { if (this.running) return; this.running = true; void this.tick(); this.timer = setInterval(() => void this.tick(), 2_000); this.timer.unref(); }
   private addPool(address: `0x${string}`, protocol: PoolRef['protocol']): void { this.pools.set(address.toLowerCase(), { address, protocol }); }
 
   private async seedPools(): Promise<void> {
     if (this.seeded) return;
-    // Always seed the verified V3 pools first. V2 factory discovery is deliberately
-    // bounded and sequential: the public RPC is rate-limited and an unbounded
-    // Promise.all fan-out can exhaust the 512 MB Render free-tier instance.
     for (const pool of VERIFIED_ACTIVE_V3_POOLS) this.addPool(pool, 'uniswap-v3');
     console.log(JSON.stringify({ event: 'pool_seed_v3_verified', selectedPools: VERIFIED_ACTIVE_V3_POOLS.length }));
-
     try {
       const length = await this.client.readContract({ address: V2_FACTORY, abi: V2_FACTORY_ABI, functionName: 'allPairsLength' });
       const total = Number(length);
@@ -53,21 +49,12 @@ export class RadarIngest {
             this.client.readContract({ address: pair, abi: V2_PAIR_ABI, functionName: 'token0' }),
             this.client.readContract({ address: pair, abi: V2_PAIR_ABI, functionName: 'token1' }),
           ]);
-          if (isQuote(token0 as `0x${string}`) !== isQuote(token1 as `0x${string}`)) {
-            selected.push({ pair, token0: token0 as `0x${string}`, token1: token1 as `0x${string}` });
-          }
-        } catch (error) {
-          console.warn(JSON.stringify({ event: 'pool_seed_v2_pair_error', index, message: error instanceof Error ? error.message : String(error) }));
-        }
+          if (isQuote(token0 as `0x${string}`) !== isQuote(token1 as `0x${string}`)) selected.push({ pair, token0: token0 as `0x${string}`, token1: token1 as `0x${string}` });
+        } catch (error) { console.warn(JSON.stringify({ event: 'pool_seed_v2_pair_error', index, message: error instanceof Error ? error.message : String(error) })); }
       }
-      for (const pair of selected.slice(-10)) {
-        this.addPool(pair.pair, 'uniswap-v2');
-        this.poolTokens.set(pair.pair.toLowerCase(), { token0: pair.token0, token1: pair.token1 });
-      }
+      for (const pair of selected.slice(-10)) { this.addPool(pair.pair, 'uniswap-v2'); this.poolTokens.set(pair.pair.toLowerCase(), { token0: pair.token0, token1: pair.token1 }); }
       console.log(JSON.stringify({ event: 'pool_seed_v2', totalPairs: total, inspectedPairs: Math.max(0, total - start), quotePairs: selected.length, selectedPools: Math.min(10, selected.length) }));
-    } catch (error) {
-      console.warn(JSON.stringify({ event: 'pool_seed_v2_error', message: error instanceof Error ? error.message : String(error) }));
-    }
+    } catch (error) { console.warn(JSON.stringify({ event: 'pool_seed_v2_error', message: error instanceof Error ? error.message : String(error) })); }
     this.seeded = true;
   }
 
@@ -90,10 +77,7 @@ export class RadarIngest {
     if (poolRefs.length === 0) { this.lastBlock = toBlock; return { swaps: [], fromBlock: boundedFrom, toBlock }; }
     const scanCount = Math.min(3, poolRefs.length);
     const selected: PoolRef[] = [];
-    for (let i = 0; i < scanCount; i++) {
-      const pool = poolRefs[(this.scanCursor + i) % poolRefs.length];
-      if (pool !== undefined) selected.push(pool);
-    }
+    for (let i = 0; i < scanCount; i++) { const pool = poolRefs[(this.scanCursor + i) % poolRefs.length]; if (pool !== undefined) selected.push(pool); }
     this.scanCursor = (this.scanCursor + selected.length) % poolRefs.length;
     const logResults = await Promise.all(selected.map(async (pool) => {
       const abi = pool.protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP;
