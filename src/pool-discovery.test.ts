@@ -12,6 +12,15 @@ const V4_ABI = parseAbi([
   'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)',
 ]);
 
+type EventTopics = [`0x${string}`, ...`0x${string}`[]];
+
+const asTopics = (topics: readonly unknown[]): EventTopics => {
+  if (topics.length === 0 || topics.some((topic) => typeof topic !== 'string')) {
+    throw new Error('Expected encoded event topics to contain only hex strings');
+  }
+  return topics as EventTopics;
+};
+
 const deployment = (protocol: DexDeployment['protocol'], id: string): DexDeployment => ({
   id,
   name: id,
@@ -33,11 +42,11 @@ test('decodes a Uniswap V3 pool creation log', () => {
   const token0 = '0x0000000000000000000000000000000000000001' as const;
   const token1 = '0x0000000000000000000000000000000000000002' as const;
   const pool = '0x0000000000000000000000000000000000000003' as const;
-  const topics = encodeEventTopics({
+  const topics = asTopics(encodeEventTopics({
     abi: V3_ABI,
     eventName: 'PoolCreated',
     args: { token0, token1, fee: 3000 },
-  });
+  }));
   const data = encodeAbiParameters(
     [{ type: 'int24' }, { type: 'address' }],
     [60, pool],
@@ -66,11 +75,11 @@ test('decodes a Uniswap V4 initialize log as a pool id', () => {
   const token0 = '0x0000000000000000000000000000000000000001' as const;
   const token1 = '0x0000000000000000000000000000000000000002' as const;
   const hooks = '0x0000000000000000000000000000000000000004' as const;
-  const topics = encodeEventTopics({
+  const topics = asTopics(encodeEventTopics({
     abi: V4_ABI,
     eventName: 'Initialize',
     args: { id, currency0: token0, currency1: token1 },
-  });
+  }));
   const data = encodeAbiParameters(
     [{ type: 'uint24' }, { type: 'int24' }, { type: 'address' }, { type: 'uint160' }, { type: 'int24' }],
     [3000, 60, hooks, 1n, 0],
