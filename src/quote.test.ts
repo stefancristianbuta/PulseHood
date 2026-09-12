@@ -25,6 +25,18 @@ test('chooses the quote with the best net expected value', () => {
   const result = chooseBestQuote([quote('slow', 1096, 500), quote('fast', 1097, 20)], 10_100);
   assert.ok(result);
   assert.equal(result.quote.dexId, 'fast');
+  assert.equal(result.gasUsd, 0.3);
+  assert.equal(result.totalCostUsd, 4.3);
+});
+
+test('latency penalty can change the winner', () => {
+  const result = chooseBestQuote(
+    [quote('slow', 1100, 1000), quote('fast', 1099, 10)],
+    10_100,
+    { maxQuoteAgeMs: 2000, maxLatencyMs: 1500, latencyPenaltyUsdPerMs: 0.01 },
+  );
+  assert.ok(result);
+  assert.equal(result.quote.dexId, 'fast');
 });
 
 test('rejects stale quotes', () => {
