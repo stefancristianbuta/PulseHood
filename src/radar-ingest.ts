@@ -60,9 +60,9 @@ export class RadarIngest {
 
   private async tick(): Promise<void> {
     try {
-      const toBlock = await this.client.getBlockNumber();
+      const head = await this.client.getBlockNumber();
       await this.seedPools();
-      const result = await this.poll(toBlock, 25n);
+      const result = await this.poll(head, 25n);
       if (!result || result.swaps.length === 0) return;
       for (const swap of result.swaps.slice(-10)) console.log(JSON.stringify({ event: 'swap_ingested', block: result.toBlock.toString(), protocol: swap.protocol, pool: swap.pool, direction: swap.direction, targetToken: swap.targetToken, trader: swap.trader ?? null, transactionHash: swap.transactionHash, logIndex: swap.logIndex }));
       console.log(JSON.stringify({ event: 'swaps_ingested_batch', count: result.swaps.length, fromBlock: result.fromBlock.toString(), toBlock: result.toBlock.toString() }));
@@ -85,18 +85,16 @@ export class RadarIngest {
   }
 
   async poll(toBlock: bigint, maxRange = 50n): Promise<RadarIngestResult | undefined> {
-    const fromBlock = this.lastBlock === undefined ? (toBlock > maxRange ? toBlock - maxRange + 1n : 0n) : this.lastBlock + 1n;
+    if (this.lastBlock === undefined) this.lastBlock = toBlock > maxRange ? toBlock - maxRange : 0n;
+    const fromBlock = this.lastBlock + 1n;
     if (fromBlock > toBlock) return undefined;
-    const boundedFrom = toBlock - fromBlock + 1n > maxRange ? toBlock - maxRange + 1n : fromBlock;
+    const scanTo = fromBlock + maxRange - 1n < toBlock ? fromBlock + maxRange - 1n : toBlock;
     const poolRefs = [...this.pools.values()];
-    if (poolRefs.length === 0) { this.lastBlock = toBlock; return { swaps: [], fromBlock: boundedFrom, toBlock }; }
-    const scanCount = Math.min(3, poolRefs.length);
-    const selected: PoolRef[] = [];
-    for (let i = 0; i < scanCount; i++) { const pool = poolRefs[(this.scanCursor + i) % poolRefs.length]; if (pool !== undefined) selected.push(pool); }
-    this.scanCursor = (this.scanCursor + selected.length) % poolRefs.length;
+    if (poolRefs.length === 0) { this.lastBlock = scanTo; return { swaps: [], fromBlock, toBlock: scanTo }; }
+    const selected = poolRefs;
     const logResults = await Promise.all(selected.map(async (pool) => {
       const abi = pool.protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP;
-      const logs = await this.getLogsAdaptive(pool, abi, boundedFrom, toBlock);
+      const logs = await this.getLogsAdaptive(pool, abi, fromBlock, scanTo);
       return { pool, abi, logs };
     }));
     const swaps: NormalizedSwap[] = [];
@@ -106,16 +104,28 @@ export class RadarIngest {
         try {
           const pool = log.address.toLowerCase();
           let tokens = this.poolTokens.get(pool);
-          if (tokens === undefined) { const [token0, token1] = await Promise.all([this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token0' }), this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token1' })]); tokens = { token0: token0 as `0x${string}`, token1: token1 as `0x${string}` }; this.poolTokens.set(pool, tokens); }
+          if (tokens === undefined) {
+            const [token0, token1] = await Promise.all([
+              this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token0' }),
+              this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token1' }),
+            ]);
+            tokens = { token0: token0 as `0x${string}`, token1: token1 as `0x${string}` };
+            this.poolTokens.set(pool, tokens);
+          }
           const token0IsQuote = isQuote(tokens.token0); const token1IsQuote = isQuote(tokens.token1); if (token0IsQuote === token1IsQuote) continue;
           const targetToken = token0IsQuote ? tokens.token1 : tokens.token0;
-          const decoded = decodeEventLog({ abi, topics: log.topics, data: log.data }); const args = decoded.args as Record<string, unknown>; const trader = typeof args.sender === 'string' && /^0x[0-9a-fA-F]{40}$/.test(args.sender) ? args.sender as `0x${string}` : undefined;
+          const decoded = decodeEventLog({ abi, topics: log.topics, data: log.data });
+          const args = decoded.args as Record<string, unknown>;
+          const trader = typeof args.sender === 'string' && /^0x[0-9a-fA-F]{40}$/.test(args.sender) ? args.sender as `0x${string}` : undefined;
           const event: Parameters<typeof normalizeSwapEvent>[0] = { status: 'decoded', address: log.address, protocol: poolRef.protocol, eventName: 'Swap', args, transactionHash: log.transactionHash, logIndex: Number(log.logIndex) };
-          const normalized = normalizeSwapEvent(event, { address: log.address, token0: tokens.token0, token1: tokens.token1, targetToken }); if (normalized.status === 'normalized') swaps.push(trader === undefined ? normalized : { ...normalized, trader });
+          const normalized = normalizeSwapEvent(event, { address: log.address, token0: tokens.token0, token1: tokens.token1, targetToken });
+          if (normalized.status === 'normalized') swaps.push(trader === undefined ? normalized : { ...normalized, trader });
         } catch (error) { console.warn(JSON.stringify({ event: 'swap_log_decode_error', protocol: poolRef.protocol, pool: log.address, transactionHash: log.transactionHash, logIndex: Number(log.logIndex), message: error instanceof Error ? error.message : String(error) })); }
       }
     }
-    this.lastBlock = toBlock; if (swaps.length > 0) this.recentSwaps = [...this.recentSwaps, ...swaps].slice(-this.maxRecentSwaps); return { swaps, fromBlock: boundedFrom, toBlock };
+    this.lastBlock = scanTo;
+    if (swaps.length > 0) this.recentSwaps = [...this.recentSwaps, ...swaps].slice(-this.maxRecentSwaps);
+    return { swaps, fromBlock, toBlock: scanTo };
   }
   getRecentSwaps(): NormalizedSwap[] { return [...this.recentSwaps]; }
   reset(): void { this.lastBlock = undefined; this.recentSwaps = []; this.poolTokens.clear(); this.pools.clear(); this.seeded = false; this.scanCursor = 0; }
