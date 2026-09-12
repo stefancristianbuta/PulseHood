@@ -16,9 +16,10 @@ async function start(): Promise<void> {
       const client = rpc.getClient();
       if (await client.getChainId() !== config.chainId) throw new Error('RPC chain mismatch');
       const ingest = new RadarIngest(client);
+      await (ingest as unknown as { seedPools: () => Promise<void> }).seedPools();
       const runtime = new PaperTradingRuntime(client, telemetry, ingest);
       runtime.start();
-      console.log(JSON.stringify({ event: 'paper_runtime_ready', chainId: config.chainId, mode: 'paper' }));
+      console.log(JSON.stringify({ event: 'paper_runtime_ready', chainId: config.chainId, mode: 'paper', poolsSeeded: true }));
       return;
     } catch (error) {
       console.warn(JSON.stringify({ event: 'paper_runtime_waiting_for_rpc', message: error instanceof Error ? error.message : String(error) }));
