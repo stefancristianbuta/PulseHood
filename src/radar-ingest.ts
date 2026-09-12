@@ -54,7 +54,7 @@ export class RadarIngest {
     } catch (error) { console.warn(JSON.stringify({ event: 'pool_seed_v3_error', message: error instanceof Error ? error.message : String(error) })); }
   }
 
-  private async discoverNewV3Pools(fromBlock: bigint, toBlock: bigint): Promise<void> { try { const logs = await this.client.getLogs({ address: V3_FACTORY, event: V3_FACTORY_ABI[0], fromBlock, toBlock }); for (const log of logs) { const args = log.args as { pool?: `0x${string}`; token0?: `0x${string}`; token1?: `0x${string}` }; if (args.pool && args.token0 && args.token1 && isQuote(args.token0) !== isQuote(args.token1)) { this.addPool(args.pool, 'uniswap-v3'); this.poolTokens.set(args.pool.toLowerCase(), { token0: args.token0, token1: args.token1 }); } } } catch (error) { console.warn(JSON.stringify({ event: 'pool_discovery_error', protocol: 'uniswap-v3', message: error instanceof Error ? error.message : String(error) })); } }
+  private async discoverNewV3Pools(fromBlock: bigint, toBlock: bigint): Promise<void> { try { const logs = await this.client.getLogs({ address: V3_FACTORY, event: V3_FACTORY_ABI[0], fromBlock, toBlock }); for (const log of logs) { const args = log.args as { pool?: `0x${string}`; token0?: `0x${string}`; token1?: `0x${string}`; }; if (args.pool && args.token0 && args.token1 && isQuote(args.token0) !== isQuote(args.token1)) { this.addPool(args.pool, 'uniswap-v3'); this.poolTokens.set(args.pool.toLowerCase(), { token0: args.token0, token1: args.token1 }); } } } catch (error) { console.warn(JSON.stringify({ event: 'pool_discovery_error', protocol: 'uniswap-v3', message: error instanceof Error ? error.message : String(error) })); } }
 
   private async tick(): Promise<void> {
     try {
@@ -74,14 +74,13 @@ export class RadarIngest {
     const boundedFrom = toBlock - fromBlock + 1n > maxRange ? toBlock - maxRange + 1n : fromBlock;
     const poolRefs = [...this.pools.values()];
     if (poolRefs.length === 0) { this.lastBlock = toBlock; return { swaps: [], fromBlock: boundedFrom, toBlock }; }
-
-    // Public RPC providers can reject multi-address eth_getLogs filters even when the
-    // block range is small. Scan a small rotating subset of individual pools instead.
     const scanCount = Math.min(2, poolRefs.length);
     const selected: PoolRef[] = [];
-    for (let i = 0; i < scanCount; i++) selected.push(poolRefs[(this.scanCursor + i) % poolRefs.length]);
-    this.scanCursor = (this.scanCursor + scanCount) % poolRefs.length;
-
+    for (let i = 0; i < scanCount; i++) {
+      const pool = poolRefs[(this.scanCursor + i) % poolRefs.length];
+      if (pool !== undefined) selected.push(pool);
+    }
+    this.scanCursor = (this.scanCursor + selected.length) % poolRefs.length;
     const logResults = await Promise.all(selected.map(async (pool) => {
       const abi = pool.protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP;
       const logs = await this.client.getLogs({ address: pool.address, event: abi[0], fromBlock: boundedFrom, toBlock });
