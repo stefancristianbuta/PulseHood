@@ -25,10 +25,11 @@ export class RpcManager {
     private readonly maxLatencyMs = 750,
     private readonly maxBlockLag = 3,
   ) {
-    if (urls.length === 0) throw new Error('At least one RPC endpoint is required');
-    this.endpoints = urls.map((url) => ({
+    const normalizedUrls = urls.map((url) => url.trim()).filter(Boolean);
+    if (normalizedUrls.length === 0) throw new Error('At least one RPC endpoint is required');
+    this.endpoints = normalizedUrls.map((url) => ({
       url,
-      client: createPublicClient({ chain: undefined, transport: http(url) }) as PublicClient<Transport>,
+      client: createPublicClient({ chain: CHAIN, transport: http(url) }) as PublicClient<Transport>,
       latencyMs: Number.POSITIVE_INFINITY,
       failures: 0,
       healthy: false,
@@ -69,7 +70,7 @@ export class RpcManager {
 
     const liveBlocks = results.filter((value): value is bigint => value !== undefined);
     if (liveBlocks.length === 0) throw new Error('All RPC endpoints are unavailable');
-    const head = liveBlocks.reduce((max, value) => (value > max ? value : max), liveBlocks[0]);
+    const head = liveBlocks.reduce((max, value) => (value > max ? value : max));
 
     for (const endpoint of this.endpoints) {
       if (endpoint.blockNumber !== undefined) {
@@ -82,8 +83,9 @@ export class RpcManager {
     const ranked = [...this.endpoints]
       .filter((endpoint) => endpoint.healthy)
       .sort((a, b) => a.latencyMs - b.latencyMs);
-    if (ranked.length === 0) throw new Error('No healthy RPC endpoint available');
-    return ranked[0].client;
+    const best = ranked[0];
+    if (best === undefined) throw new Error('No healthy RPC endpoint available');
+    return best.client;
   }
 
   getStatus() {
