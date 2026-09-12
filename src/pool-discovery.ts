@@ -26,13 +26,22 @@ const V4_INITIALIZE = parseAbi([
   'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)',
 ]);
 
+type EventTopics = [`0x${string}`, ...`0x${string}`[]];
+
+type PoolCreationLog = {
+  topics: readonly `0x${string}`[];
+  data: `0x${string}`;
+  blockNumber?: bigint;
+  transactionHash?: `0x${string}`;
+};
+
 export function supportedPoolDiscovery(protocol: DexProtocol): boolean {
   return protocol === 'uniswap-v2' || protocol === 'uniswap-v3' || protocol === 'uniswap-v4';
 }
 
 function withLogMetadata(
   base: Omit<DiscoveredPool, 'blockNumber' | 'transactionHash'>,
-  log: { blockNumber?: bigint; transactionHash?: `0x${string}` },
+  log: Pick<PoolCreationLog, 'blockNumber' | 'transactionHash'>,
 ): DiscoveredPool {
   const result: DiscoveredPool = { ...base };
   if (log.blockNumber !== undefined) result.blockNumber = log.blockNumber;
@@ -40,11 +49,16 @@ function withLogMetadata(
   return result;
 }
 
+function normalizeTopics(topics: readonly `0x${string}`[]): EventTopics {
+  if (topics.length === 0) throw new Error('Pool creation log is missing its event signature topic');
+  return topics as EventTopics;
+}
+
 export function decodePoolCreationLog(
   deployment: DexDeployment,
-  log: { topics: readonly `0x${string}`[]; data: `0x${string}`; blockNumber?: bigint; transactionHash?: `0x${string}` },
+  log: PoolCreationLog,
 ): DiscoveredPool {
-  const topics = [...log.topics] as `0x${string}`[];
+  const topics = normalizeTopics(log.topics);
 
   if (deployment.protocol === 'uniswap-v2') {
     const decoded = decodeEventLog({ abi: V2_PAIR_CREATED, topics, data: log.data });
