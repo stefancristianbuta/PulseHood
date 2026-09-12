@@ -21,6 +21,7 @@ export interface NormalizedSwap {
   quoteToken: `0x${string}` | undefined;
   amountIn: bigint | undefined;
   amountOut: bigint | undefined;
+  trader?: `0x${string}`;
   reason: string | undefined;
 }
 
