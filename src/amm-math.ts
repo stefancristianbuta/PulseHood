@@ -22,6 +22,7 @@ export function quoteConstantProduct(
   const feeDenominator = 10_000n;
   const feeNumerator = feeDenominator - BigInt(feeBps);
   const amountInAfterFee = amountIn * feeNumerator / feeDenominator;
+  const feeAmount = amountIn - amountInAfterFee;
   if (amountInAfterFee <= 0n) throw new Error('amountIn is too small after fees');
 
   const amountOut = reserveOut * amountInAfterFee / (reserveIn + amountInAfterFee);
@@ -35,7 +36,7 @@ export function quoteConstantProduct(
   return {
     amountIn,
     amountOut,
-    feeAmount: amountIn - amountInAfterFee,
+    feeAmount,
     reserveIn,
     reserveOut,
     reserveInAfter: reserveIn + amountIn,
