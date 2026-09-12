@@ -11,17 +11,17 @@ export interface PoolDescriptor {
 
 export interface NormalizedSwap {
   status: 'normalized' | 'unsupported' | 'invalid';
-  protocol?: string;
-  eventName?: string;
+  protocol: string | undefined;
+  eventName: string | undefined;
   pool: `0x${string}`;
   transactionHash: `0x${string}`;
   logIndex: number;
   direction: SwapDirection;
   targetToken: `0x${string}`;
-  quoteToken?: `0x${string}`;
-  amountIn?: bigint;
-  amountOut?: bigint;
-  reason?: string;
+  quoteToken: `0x${string}` | undefined;
+  amountIn: bigint | undefined;
+  amountOut: bigint | undefined;
+  reason: string | undefined;
 }
 
 function address(value: unknown): `0x${string}` | undefined {
@@ -37,22 +37,11 @@ function integer(value: unknown): bigint | undefined {
   return undefined;
 }
 
-function directSwap(args: Record<string, unknown>, pool: PoolDescriptor): NormalizedSwap | undefined {
-  const tokenIn = address(args.tokenIn);
-  const tokenOut = address(args.tokenOut);
-  const amountIn = integer(args.amountIn);
-  const amountOut = integer(args.amountOut);
-  if (tokenIn === undefined || tokenOut === undefined) return undefined;
-  if (amountIn === undefined || amountOut === undefined) return undefined;
-
-  const target = pool.targetToken.toLowerCase();
-  const input = tokenIn.toLowerCase();
-  const output = tokenOut.toLowerCase();
-  const direction: SwapDirection = output === target ? 'BUY' : input === target ? 'SELL' : 'UNKNOWN';
-  const quoteToken = output === target ? tokenIn : input === target ? tokenOut : undefined;
-
+function baseSwap(pool: PoolDescriptor, direction: SwapDirection, quoteToken: `0x${string}` | undefined, amountIn: bigint | undefined, amountOut: bigint | undefined): NormalizedSwap {
   return {
     status: 'normalized',
+    protocol: undefined,
+    eventName: undefined,
     direction,
     targetToken: pool.targetToken,
     quoteToken,
@@ -61,7 +50,23 @@ function directSwap(args: Record<string, unknown>, pool: PoolDescriptor): Normal
     pool: pool.address,
     transactionHash: '' as `0x${string}`,
     logIndex: 0,
+    reason: undefined,
   };
+}
+
+function directSwap(args: Record<string, unknown>, pool: PoolDescriptor): NormalizedSwap | undefined {
+  const tokenIn = address(args.tokenIn);
+  const tokenOut = address(args.tokenOut);
+  const amountIn = integer(args.amountIn);
+  const amountOut = integer(args.amountOut);
+  if (tokenIn === undefined || tokenOut === undefined || amountIn === undefined || amountOut === undefined) return undefined;
+
+  const target = pool.targetToken.toLowerCase();
+  const input = tokenIn.toLowerCase();
+  const output = tokenOut.toLowerCase();
+  const direction: SwapDirection = output === target ? 'BUY' : input === target ? 'SELL' : 'UNKNOWN';
+  const quoteToken = output === target ? tokenIn : input === target ? tokenOut : undefined;
+  return baseSwap(pool, direction, quoteToken, amountIn, amountOut);
 }
 
 function uniswapV2Swap(args: Record<string, unknown>, pool: PoolDescriptor): NormalizedSwap | undefined {
@@ -83,17 +88,13 @@ function uniswapV2Swap(args: Record<string, unknown>, pool: PoolDescriptor): Nor
       ? 'SELL'
       : 'UNKNOWN';
 
-  return {
-    status: 'normalized',
+  return baseSwap(
+    pool,
     direction,
-    targetToken: pool.targetToken,
-    quoteToken: targetIs0 ? pool.token1 : pool.token0,
-    amountIn: direction === 'BUY' ? quoteIn : direction === 'SELL' ? targetIn : undefined,
-    amountOut: direction === 'BUY' ? targetOut : direction === 'SELL' ? quoteOut : undefined,
-    pool: pool.address,
-    transactionHash: '' as `0x${string}`,
-    logIndex: 0,
-  };
+    targetIs0 ? pool.token1 : pool.token0,
+    direction === 'BUY' ? quoteIn : direction === 'SELL' ? targetIn : undefined,
+    direction === 'BUY' ? targetOut : direction === 'SELL' ? quoteOut : undefined,
+  );
 }
 
 function uniswapV3Swap(args: Record<string, unknown>, pool: PoolDescriptor): NormalizedSwap | undefined {
@@ -110,28 +111,29 @@ function uniswapV3Swap(args: Record<string, unknown>, pool: PoolDescriptor): Nor
       ? 'SELL'
       : 'UNKNOWN';
 
-  return {
-    status: 'normalized',
+  return baseSwap(
+    pool,
     direction,
-    targetToken: pool.targetToken,
-    quoteToken: targetIs0 ? pool.token1 : pool.token0,
-    amountIn: direction === 'BUY' ? quoteAmount : direction === 'SELL' ? targetAmount : undefined,
-    amountOut: direction === 'BUY' ? -targetAmount : direction === 'SELL' ? -quoteAmount : undefined,
-    pool: pool.address,
-    transactionHash: '' as `0x${string}`,
-    logIndex: 0,
-  };
+    targetIs0 ? pool.token1 : pool.token0,
+    direction === 'BUY' ? quoteAmount : direction === 'SELL' ? targetAmount : undefined,
+    direction === 'BUY' ? -targetAmount : direction === 'SELL' ? -quoteAmount : undefined,
+  );
 }
 
 export function normalizeSwapEvent(event: DecodedEvent, pool: PoolDescriptor): NormalizedSwap {
   if (event.status !== 'decoded') {
     return {
       status: 'invalid',
+      protocol: event.protocol,
+      eventName: event.eventName,
       pool: pool.address,
       transactionHash: event.transactionHash,
       logIndex: event.logIndex,
       direction: 'UNKNOWN',
       targetToken: pool.targetToken,
+      quoteToken: undefined,
+      amountIn: undefined,
+      amountOut: undefined,
       reason: event.reason ?? 'event_not_decoded',
     };
   }
@@ -147,6 +149,9 @@ export function normalizeSwapEvent(event: DecodedEvent, pool: PoolDescriptor): N
       logIndex: event.logIndex,
       direction: 'UNKNOWN',
       targetToken: pool.targetToken,
+      quoteToken: undefined,
+      amountIn: undefined,
+      amountOut: undefined,
       reason: 'named_event_arguments_required',
     };
   }
@@ -165,6 +170,9 @@ export function normalizeSwapEvent(event: DecodedEvent, pool: PoolDescriptor): N
       logIndex: event.logIndex,
       direction: 'UNKNOWN',
       targetToken: pool.targetToken,
+      quoteToken: undefined,
+      amountIn: undefined,
+      amountOut: undefined,
       reason: 'unsupported_swap_shape',
     };
   }
