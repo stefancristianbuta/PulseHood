@@ -18,7 +18,7 @@ export type ChainBlockHandler = (block: ChainBlock) => void | Promise<void>;
 
 export class WebSocketChainFeed {
   private readonly client: PublicClient<Transport>;
-  private unwatch?: () => void;
+  private unwatch: (() => void) | undefined;
   private readonly seenTransactions = new Set<`0x${string}`>();
 
   constructor(
@@ -48,7 +48,7 @@ export class WebSocketChainFeed {
         const normalized: ChainBlock = {
           number: block.number,
           hash: block.hash ?? null,
-          timestamp: block.timestamp,
+          timestamp: BigInt(block.timestamp),
           transactionHashes,
         };
 
