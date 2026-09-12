@@ -67,6 +67,7 @@ export interface ExecutionQuote {
   priceImpactUsd: number;
   gasEstimate: bigint;
   gasPriceWei: bigint;
+  nativeTokenUsd: number;
   quotedAt: number;
   latencyMs: number;
 }
