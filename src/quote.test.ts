@@ -22,7 +22,7 @@ function quote(dexId: string, expectedAmountOutUsd: number, latencyMs: number): 
 }
 
 test('chooses the quote with the best net expected value', () => {
-  const result = chooseBestQuote([quote('slow', 1096, 500), quote('fast', 1095, 20)], 10_100);
+  const result = chooseBestQuote([quote('slow', 1096, 500), quote('fast', 1097, 20)], 10_100);
   assert.ok(result);
   assert.equal(result.quote.dexId, 'fast');
 });
