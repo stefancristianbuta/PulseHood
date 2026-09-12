@@ -4,7 +4,6 @@ import {
   type Abi,
   type Hex,
 } from 'viem';
-import type { AbiEvent } from 'viem';
 
 export interface TransactionEnvelope {
   hash: Hex;
