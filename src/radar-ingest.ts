@@ -69,6 +69,21 @@ export class RadarIngest {
     } catch (error) { console.warn(JSON.stringify({ event: 'swap_ingest_error', message: error instanceof Error ? error.message : String(error) })); }
   }
 
+  private async getLogsAdaptive(pool: PoolRef, abi: readonly unknown[], fromBlock: bigint, toBlock: bigint) {
+    const fetchRange = async (from: bigint, to: bigint): Promise<any[]> => {
+      try {
+        return await this.client.getLogs({ address: pool.address, event: abi[0] as never, fromBlock: from, toBlock: to });
+      } catch (error) {
+        if (from === to) throw error;
+        const midpoint = from + ((to - from) / 2n);
+        console.warn(JSON.stringify({ event: 'log_range_fallback', protocol: pool.protocol, pool: pool.address, fromBlock: from.toString(), toBlock: to.toString(), splitAt: midpoint.toString(), message: error instanceof Error ? error.message : String(error) }));
+        const [left, right] = await Promise.all([fetchRange(from, midpoint), fetchRange(midpoint + 1n, to)]);
+        return [...left, ...right];
+      }
+    };
+    return fetchRange(fromBlock, toBlock);
+  }
+
   async poll(toBlock: bigint, maxRange = 50n): Promise<RadarIngestResult | undefined> {
     const fromBlock = this.lastBlock === undefined ? (toBlock > maxRange ? toBlock - maxRange + 1n : 0n) : this.lastBlock + 1n;
     if (fromBlock > toBlock) return undefined;
@@ -81,7 +96,7 @@ export class RadarIngest {
     this.scanCursor = (this.scanCursor + selected.length) % poolRefs.length;
     const logResults = await Promise.all(selected.map(async (pool) => {
       const abi = pool.protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP;
-      const logs = await this.client.getLogs({ address: pool.address, event: abi[0], fromBlock: boundedFrom, toBlock });
+      const logs = await this.getLogsAdaptive(pool, abi, boundedFrom, toBlock);
       return { pool, abi, logs };
     }));
     const swaps: NormalizedSwap[] = [];
