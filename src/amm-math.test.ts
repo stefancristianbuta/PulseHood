@@ -15,7 +15,7 @@ test('constant-product quote charges fee before applying invariant', () => {
 test('constant-product quote uses the configured fee exactly', () => {
   const quote = quoteConstantProduct(1_000_000n, 10_000_000n, 20_000_000n, 100);
   assert.equal(quote.feeAmount, 10_000n);
-  assert.equal(quote.amountOut, 1_978_218n);
+  assert.equal(quote.amountOut, 1_801_637n);
 });
 
 test('rejects empty liquidity and invalid fee configuration', () => {
