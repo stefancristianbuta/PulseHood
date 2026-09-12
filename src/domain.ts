@@ -64,6 +64,7 @@ export interface ExecutionQuote {
   expectedAmountOutUsd: number;
   executablePriceUsd: number;
   dexFeeUsd: number;
+  slippageUsd: number;
   priceImpactUsd: number;
   gasEstimate: bigint;
   gasPriceWei: bigint;
