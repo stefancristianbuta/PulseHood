@@ -5,10 +5,10 @@ import { quoteConstantProduct } from './amm-math.js';
 test('constant-product quote charges fee before applying invariant', () => {
   const quote = quoteConstantProduct(100n, 10_000n, 20_000n, 30);
   assert.equal(quote.amountIn, 100n);
-  assert.equal(quote.feeAmount, 0n);
-  assert.equal(quote.amountOut, 197n);
+  assert.equal(quote.feeAmount, 1n);
+  assert.equal(quote.amountOut, 196n);
   assert.equal(quote.reserveInAfter, 10_100n);
-  assert.equal(quote.reserveOutAfter, 19_803n);
+  assert.equal(quote.reserveOutAfter, 19_804n);
   assert.ok(quote.priceImpactBps > 0);
 });
 
