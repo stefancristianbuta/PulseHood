@@ -51,7 +51,11 @@ export function evaluateSignal(input: SignalInput): SignalResult {
   };
 
   const entryQualified = qualifiesForEntry(entryInput);
-  const signal: Signal = entryQualified ? 'BUY' : momentum.score >= 80 && risk.tradable ? 'WATCH' : 'REJECT';
+  const signal: Signal = entryQualified
+    ? 'BUY'
+    : momentum.score >= 65 && risk.tradable
+      ? 'WATCH'
+      : 'REJECT';
 
   return { signal, momentum, risk, entryQualified, momentumInput };
 }
