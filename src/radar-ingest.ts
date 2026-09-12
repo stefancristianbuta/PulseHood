@@ -5,13 +5,15 @@ import { normalizeSwapEvent } from './swap-event.js';
 const WETH = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73'.toLowerCase();
 const USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168'.toLowerCase();
 const V2_FACTORY = '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f' as `0x${string}`;
-const V3_FACTORY = '0x1f7d7550b1b028f7571e69a784071f0205fd2efa' as `0x${string}`;
-const V2_SWAP = parseAbi(['event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)']);
 const V3_SWAP = parseAbi(['event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)']);
+const V2_SWAP = parseAbi(['event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)']);
 const V2_FACTORY_ABI = parseAbi(['function allPairsLength() view returns (uint256)', 'function allPairs(uint256) view returns (address)']);
 const V2_PAIR_ABI = parseAbi(['function token0() view returns (address)', 'function token1() view returns (address)']);
-const V3_FACTORY_ABI = parseAbi(['event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)']);
 const TOKEN_ABI = parseAbi(['function token0() view returns (address)', 'function token1() view returns (address)']);
+const VERIFIED_ACTIVE_V3_POOLS: `0x${string}`[] = [
+  '0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca',
+  '0x7a192e71564ec66ee0763e328a3ac274942de4e1',
+];
 type Client = PublicClient<Transport>;
 interface PoolTokens { token0: `0x${string}`; token1: `0x${string}`; }
 interface PoolRef { address: `0x${string}`; protocol: 'uniswap-v2' | 'uniswap-v3'; }
@@ -31,9 +33,8 @@ export class RadarIngest {
   private start(): void { if (this.running) return; this.running = true; void this.tick(); this.timer = setInterval(() => void this.tick(), 2_000); this.timer.unref(); }
   private addPool(address: `0x${string}`, protocol: PoolRef['protocol']): void { this.pools.set(address.toLowerCase(), { address, protocol }); }
 
-  private async seedPools(toBlock: bigint): Promise<void> {
+  private async seedPools(): Promise<void> {
     if (this.seeded) return;
-    this.seeded = true;
     try {
       const length = await this.client.readContract({ address: V2_FACTORY, abi: V2_FACTORY_ABI, functionName: 'allPairsLength' });
       const total = Number(length);
@@ -46,22 +47,16 @@ export class RadarIngest {
       for (const pair of selectedPairs) { this.addPool(pair.pair, 'uniswap-v2'); this.poolTokens.set(pair.pair.toLowerCase(), { token0: pair.token0, token1: pair.token1 }); }
       console.log(JSON.stringify({ event: 'pool_seed_v2', totalPairs: total, inspectedPairs: pairs.length, quotePairs: quotePairs.length, selectedPools: selectedPairs.length }));
     } catch (error) { console.warn(JSON.stringify({ event: 'pool_seed_v2_error', message: error instanceof Error ? error.message : String(error) })); }
-    try {
-      const fromBlock = toBlock > 25n ? toBlock - 24n : 0n;
-      const created = await this.client.getLogs({ address: V3_FACTORY, event: V3_FACTORY_ABI[0], fromBlock, toBlock });
-      for (const log of created) { const args = log.args as { pool?: `0x${string}`; token0?: `0x${string}`; token1?: `0x${string}` }; if (args.pool && args.token0 && args.token1 && isQuote(args.token0) !== isQuote(args.token1)) { this.addPool(args.pool, 'uniswap-v3'); this.poolTokens.set(args.pool.toLowerCase(), { token0: args.token0, token1: args.token1 }); } }
-      console.log(JSON.stringify({ event: 'pool_seed_v3', discoveredPools: created.length }));
-    } catch (error) { console.warn(JSON.stringify({ event: 'pool_seed_v3_error', message: error instanceof Error ? error.message : String(error) })); }
+    for (const pool of VERIFIED_ACTIVE_V3_POOLS) this.addPool(pool, 'uniswap-v3');
+    this.seeded = true;
+    console.log(JSON.stringify({ event: 'pool_seed_v3_verified', selectedPools: VERIFIED_ACTIVE_V3_POOLS.length }));
   }
-
-  private async discoverNewV3Pools(fromBlock: bigint, toBlock: bigint): Promise<void> { try { const logs = await this.client.getLogs({ address: V3_FACTORY, event: V3_FACTORY_ABI[0], fromBlock, toBlock }); for (const log of logs) { const args = log.args as { pool?: `0x${string}`; token0?: `0x${string}`; token1?: `0x${string}`; }; if (args.pool && args.token0 && args.token1 && isQuote(args.token0) !== isQuote(args.token1)) { this.addPool(args.pool, 'uniswap-v3'); this.poolTokens.set(args.pool.toLowerCase(), { token0: args.token0, token1: args.token1 }); } } } catch (error) { console.warn(JSON.stringify({ event: 'pool_discovery_error', protocol: 'uniswap-v3', message: error instanceof Error ? error.message : String(error) })); } }
 
   private async tick(): Promise<void> {
     try {
       const toBlock = await this.client.getBlockNumber();
-      await this.seedPools(toBlock);
+      await this.seedPools();
       const result = await this.poll(toBlock, 25n);
-      await this.discoverNewV3Pools(result?.fromBlock ?? (toBlock > 25n ? toBlock - 24n : 0n), toBlock);
       if (!result || result.swaps.length === 0) return;
       for (const swap of result.swaps.slice(-10)) console.log(JSON.stringify({ event: 'swap_ingested', block: result.toBlock.toString(), protocol: swap.protocol, pool: swap.pool, direction: swap.direction, targetToken: swap.targetToken, trader: swap.trader ?? null, transactionHash: swap.transactionHash, logIndex: swap.logIndex }));
       console.log(JSON.stringify({ event: 'swaps_ingested_batch', count: result.swaps.length, fromBlock: result.fromBlock.toString(), toBlock: result.toBlock.toString() }));
@@ -74,7 +69,7 @@ export class RadarIngest {
     const boundedFrom = toBlock - fromBlock + 1n > maxRange ? toBlock - maxRange + 1n : fromBlock;
     const poolRefs = [...this.pools.values()];
     if (poolRefs.length === 0) { this.lastBlock = toBlock; return { swaps: [], fromBlock: boundedFrom, toBlock }; }
-    const scanCount = Math.min(2, poolRefs.length);
+    const scanCount = Math.min(3, poolRefs.length);
     const selected: PoolRef[] = [];
     for (let i = 0; i < scanCount; i++) {
       const pool = poolRefs[(this.scanCursor + i) % poolRefs.length];
