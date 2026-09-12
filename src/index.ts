@@ -78,6 +78,7 @@ async function main(): Promise<void> {
       }
       rpcChainId = chainId;
       rpcReady = true;
+      console.log(JSON.stringify({ event: 'rpc_ready', chainId, rpcStatus: rpc.getStatus() }));
       telemetry.emitEvent({
         correlationId: TelemetryBus.correlationId('RPC'),
         module: 'rpc',
@@ -87,14 +88,15 @@ async function main(): Promise<void> {
       });
     } catch (error) {
       rpcReady = false;
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(JSON.stringify({ event: 'rpc_unavailable', message, rpcStatus: rpc.getStatus() }));
       telemetry.emitEvent({
         correlationId: TelemetryBus.correlationId('RPC'),
         module: 'rpc',
         event: 'unavailable_retrying',
         status: 'warning',
-        payload: { error: error instanceof Error ? error.message : String(error) },
+        payload: { error: message },
       });
-      console.warn('RPC unavailable; retrying in 15s');
     }
   };
 
