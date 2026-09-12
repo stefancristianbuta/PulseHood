@@ -47,7 +47,7 @@ export interface DecodedEvent {
   logIndex: number;
   protocol?: string;
   eventName?: string;
-  args?: Record<string, unknown>;
+  args?: readonly unknown[] | Record<string, unknown>;
   reason?: string;
 }
 
@@ -103,14 +103,15 @@ export class TransactionDecoder {
         abi: registration.abi,
         data: transaction.input,
       });
-      return {
+      const result: DecodedTransaction = {
         status: 'decoded',
         hash: transaction.hash,
         to: transaction.to,
         protocol: registration.protocol,
         functionName: decoded.functionName,
-        args: decoded.args as readonly unknown[] | undefined,
       };
+      if (decoded.args !== undefined) result.args = decoded.args;
+      return result;
     } catch (error) {
       return {
         status: 'invalid',
@@ -142,17 +143,18 @@ export class EventDecoder {
       const decoded = decodeEventLog({
         abi: registration.abi,
         data: log.data,
-        topics: log.topics,
+        topics: [...log.topics],
       });
-      return {
+      const result: DecodedEvent = {
         status: 'decoded',
         address: log.address,
         transactionHash: log.transactionHash,
         logIndex: log.logIndex,
         protocol: registration.protocol,
-        eventName: decoded.eventName,
-        args: decoded.args as Record<string, unknown>,
       };
+      if (decoded.eventName !== undefined) result.eventName = decoded.eventName;
+      if (decoded.args !== undefined) result.args = decoded.args;
+      return result;
     } catch (error) {
       return {
         status: 'invalid',
