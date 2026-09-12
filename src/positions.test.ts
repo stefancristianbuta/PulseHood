@@ -3,13 +3,13 @@ import { test } from 'node:test';
 import { PositionManager } from './positions.js';
 import type { Position } from './domain.js';
 
-function position(): Position {
+function position(state: Position['state'] = 'DISCOVERED', id = 'POS-1'): Position {
   return {
-    id: 'POS-1',
+    id,
     opportunityId: 'OPP-1',
     token: '0x0000000000000000000000000000000000002000',
     symbol: 'TEST',
-    state: 'DISCOVERED',
+    state,
     entryPriceUsd: 1,
     currentPriceUsd: 1,
     peakPriceUsd: 1,
@@ -40,15 +40,18 @@ test('emergency stop blocks new entries without closing positions', () => {
   assert.equal(manager.get('POS-1')?.state, 'DISCOVERED');
 });
 
-test('emergency close all closes every open position', () => {
+test('emergency close all closes active positions but leaves pre-entry candidates intact', () => {
   const manager = new PositionManager();
-  manager.add(position());
-  const second = { ...position(), id: 'POS-2', state: 'OPEN' as const };
-  manager.add(second);
+  manager.add(position('DISCOVERED', 'POS-1'));
+  manager.add(position('QUALIFIED', 'POS-2'));
+  manager.add(position('OPEN', 'POS-3'));
+  manager.add(position('TRAILING', 'POS-4'));
 
   const closed = manager.emergencyCloseAll(1234);
 
-  assert.equal(closed.length, 2);
+  assert.deepEqual(closed.map((item) => item.id).sort(), ['POS-3', 'POS-4']);
   assert.equal(manager.listOpen().length, 0);
-  assert.equal(manager.get('POS-2')?.updatedAt, 1234);
+  assert.equal(manager.get('POS-1')?.state, 'DISCOVERED');
+  assert.equal(manager.get('POS-2')?.state, 'QUALIFIED');
+  assert.equal(manager.get('POS-3')?.updatedAt, 1234);
 });
