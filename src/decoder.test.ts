@@ -67,13 +67,13 @@ test('decodes a registered event log', () => {
   const topics = encodeEventTopics({
     abi,
     eventName: 'Swap',
-    args: [sender, tokenIn, tokenOut],
+    args: { sender, tokenIn, tokenOut },
   });
 
   const log: LogEnvelope = {
     address: router,
     data: `0x${'00'.repeat(64)}`,
-    topics: topics as readonly `0x${string}`[],
+    topics: [...topics],
     blockNumber: 100n,
     transactionHash: txHash,
     logIndex: 0,
