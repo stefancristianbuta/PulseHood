@@ -108,6 +108,34 @@ async function main(): Promise<void> {
   await probeRpc();
   const rpcRetry = setInterval(() => { void probeRpc(); }, 15_000);
 
+  const pollBlock = async (): Promise<void> => {
+    if (!rpcReady) return;
+    try {
+      const block = await rpc.getClient().getBlock({ includeTransactions: false });
+      if (latestBlock === undefined || block.number > latestBlock) {
+        latestBlock = block.number;
+        telemetry.emitEvent({
+          correlationId: TelemetryBus.correlationId('RADAR'),
+          module: 'radar',
+          event: 'block_polled',
+          block: block.number,
+          status: 'ok',
+          payload: { transactionCount: block.transactions.length, source: 'rpc-poll' },
+        });
+      }
+    } catch (error) {
+      telemetry.emitEvent({
+        correlationId: TelemetryBus.correlationId('RADAR'),
+        module: 'radar',
+        event: 'block_poll_error',
+        status: 'warning',
+        payload: { error: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  };
+  await pollBlock();
+  const blockPoller = setInterval(() => { void pollBlock(); }, 2_000);
+
   const startFeed = (): void => {
     const feed = feeds[feedIndex];
     if (feed === undefined) throw new Error('No WebSocket feed configured');
@@ -119,7 +147,7 @@ async function main(): Promise<void> {
         event: 'block_ingested',
         block: block.number,
         status: 'ok',
-        payload: { transactionCount: block.transactionHashes.length, feedIndex },
+        payload: { transactionCount: block.transactionHashes.length, feedIndex, source: 'websocket' },
       });
     });
   };
@@ -145,6 +173,7 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     clearInterval(heartbeat);
     clearInterval(rpcRetry);
+    clearInterval(blockPoller);
     for (const feed of feeds) feed.stop();
     server.close();
     console.log('PulseHood shutdown complete');
