@@ -10,6 +10,11 @@ const config = loadConfig();
 const telemetry = new TelemetryBus();
 const rpc = new RpcManager(config.rpcUrls, telemetry, config.maxRpcLatencyMs, config.maxBlockLag);
 
+const serializableRpcStatus = () => rpc.getStatus().map((endpoint) => ({
+  ...endpoint,
+  blockNumber: endpoint.blockNumber?.toString() ?? null,
+}));
+
 async function main(): Promise<void> {
   if (config.tradingMode !== 'paper' || config.liveEnabled) {
     throw new Error('Deploy safety gate: only paper mode is permitted in this V1 runtime');
@@ -44,7 +49,7 @@ async function main(): Promise<void> {
         rpcReady,
         rpcChainId: rpcChainId ?? null,
         latestBlock: latestBlock?.toString() ?? null,
-        rpcStatus: rpc.getStatus(),
+        rpcStatus: serializableRpcStatus(),
       }));
       return;
     }
@@ -78,7 +83,7 @@ async function main(): Promise<void> {
       }
       rpcChainId = chainId;
       rpcReady = true;
-      console.log(JSON.stringify({ event: 'rpc_ready', chainId, rpcStatus: rpc.getStatus() }));
+      console.log(JSON.stringify({ event: 'rpc_ready', chainId, rpcStatus: serializableRpcStatus() }));
       telemetry.emitEvent({
         correlationId: TelemetryBus.correlationId('RPC'),
         module: 'rpc',
@@ -89,7 +94,7 @@ async function main(): Promise<void> {
     } catch (error) {
       rpcReady = false;
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(JSON.stringify({ event: 'rpc_unavailable', message, rpcStatus: rpc.getStatus() }));
+      console.warn(JSON.stringify({ event: 'rpc_unavailable', message, rpcStatus: serializableRpcStatus() }));
       telemetry.emitEvent({
         correlationId: TelemetryBus.correlationId('RPC'),
         module: 'rpc',
