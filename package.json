@@ -1,0 +1,20 @@
+{
+  "name": "pulsehood",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PulseHood V1 - Robinhood Chain momentum radar and paper trading platform",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "node --test --import tsx src/**/*.test.ts",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "viem": "^2.37.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  }
+}
