@@ -39,10 +39,10 @@ export class PaperExecutionEngine implements ExecutionEngine {
   private async execute(order: ExecutionOrder): Promise<ExecutionResult> {
     const started = performance.now();
     const gasEth = Number(order.quote.gasEstimate * order.quote.gasPriceWei) / 1e18;
-    const gasUsd = gasEth * 0; // ETH/USD oracle is injected by the quote layer in the next stage.
+    const gasUsd = gasEth * order.quote.nativeTokenUsd;
     const dexFeeUsd = Math.max(0, order.quote.dexFeeUsd);
     const priceImpactUsd = Math.max(0, order.quote.priceImpactUsd);
-    const slippageUsd = Math.max(0, order.amountUsd - order.quote.expectedAmountOutUsd - priceImpactUsd - dexFeeUsd);
+    const slippageUsd = Math.max(0, order.amountUsd - order.quote.expectedAmountOutUsd);
     const cost: PaperCost = {
       dexFeeUsd,
       gasUsd,
@@ -54,7 +54,7 @@ export class PaperExecutionEngine implements ExecutionEngine {
     const fill: PaperFill = {
       side: order.side,
       requestedUsd: order.amountUsd,
-      executedUsd: Math.max(0, order.quote.expectedAmountOutUsd - cost.totalUsd),
+      executedUsd: Math.max(0, order.quote.expectedAmountOutUsd - priceImpactUsd),
       executionPriceUsd: order.quote.executablePriceUsd,
       cost,
       timestamp: Date.now(),
@@ -73,6 +73,7 @@ export class PaperExecutionEngine implements ExecutionEngine {
         requestedUsd: order.amountUsd,
         executedUsd: fill.executedUsd,
         totalCostUsd: cost.totalUsd,
+        gasUsd,
       },
     });
 
