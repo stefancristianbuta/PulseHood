@@ -97,7 +97,9 @@ export class RadarIngest {
       poolRefs.filter((pool) => pool.protocol === 'uniswap-v3'),
     ].filter((group) => group.length > 0);
     const logResults = await Promise.all(groups.map(async (group) => {
-      const abi = group[0].protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP;
+      const first = group[0];
+      if (first === undefined) throw new Error('Unexpected empty pool group');
+      const abi = first.protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP;
       const logs = await this.getLogsAdaptive(group, abi, fromBlock, scanTo);
       return { pools: group, abi, logs };
     }));
