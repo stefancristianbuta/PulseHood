@@ -11,6 +11,7 @@ import { chooseBestQuote } from './quote.js';
 
 const ERC20 = parseAbi(['function decimals() view returns (uint8)']);
 const V2 = parseAbi(['function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)', 'function token0() view returns (address)', 'function token1() view returns (address)']);
+const V3 = parseAbi(['function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)', 'function liquidity() view returns (uint128)', 'function token0() view returns (address)', 'function token1() view returns (address)']);
 const WETH = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73'.toLowerCase();
 const USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168'.toLowerCase();
 const PAPER_ETH_USD = Number(process.env.PAPER_ETH_USD ?? 3000);
@@ -18,199 +19,50 @@ const ENTRY_SIZE_USD = Number(process.env.PAPER_ENTRY_SIZE_USD ?? 250);
 const MIN_LIQUIDITY_USD = Number(process.env.MIN_LIQUIDITY_USD ?? 25_000);
 const MIN_UNIQUE_BUYER_SCORE = Number(process.env.MIN_UNIQUE_BUYER_SCORE ?? 20);
 const V2_PROTOCOL = 'uniswap-v2';
-
 type Client = PublicClient<Transport>;
 type Addr = `0x${string}`;
-
-interface PoolMarket {
-  liquidityUsd: number;
-  priceUsd: number;
-  quotePriceUsd: number;
-}
-
+interface PoolMarket { liquidityUsd: number; priceUsd: number; quotePriceUsd: number; }
 function finite(value: number, fallback = 0): number { return Number.isFinite(value) ? value : fallback; }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
-function opportunityId(sequence: number): string {
-  const d = new Date();
-  const stamp = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
-  return `OPP-${stamp}-${String(sequence).padStart(6, '0')}`;
-}
+function opportunityId(sequence: number): string { const d = new Date(); const stamp = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`; return `OPP-${stamp}-${String(sequence).padStart(6, '0')}`; }
 
 export class PaperTradingRuntime {
   private readonly flow = new FlowEngine(60_000);
   private readonly positions = new PositionManager();
   private readonly execution: PaperExecutionEngine;
   private readonly seen = new Set<string>();
-  private sequence = 0;
-  private running = false;
-  private timer: NodeJS.Timeout | undefined;
-  private lastBlock = 0n;
-  private readonly minLiquidityUsd: number;
-  private readonly entrySizeUsd: number;
-
-  constructor(private readonly client: Client, private readonly telemetry: TelemetryBus, private readonly ingest: RadarIngest) {
-    this.execution = new PaperExecutionEngine(telemetry);
-    this.minLiquidityUsd = Math.max(1, MIN_LIQUIDITY_USD);
-    this.entrySizeUsd = Math.max(25, ENTRY_SIZE_USD);
-  }
-
-  start(): void {
-    if (this.running) return;
-    this.running = true;
-    void this.tick();
-    this.timer = setInterval(() => void this.tick(), 2_000);
-    this.timer.unref();
-    console.log(JSON.stringify({ event: 'paper_strategy_started', entrySizeUsd: this.entrySizeUsd, minLiquidityUsd: this.minLiquidityUsd }));
-  }
-
-  stop(): void {
-    if (this.timer !== undefined) clearInterval(this.timer);
-    this.timer = undefined;
-    this.running = false;
-  }
-
+  private sequence = 0; private running = false; private timer: NodeJS.Timeout | undefined; private lastBlock = 0n;
+  private readonly minLiquidityUsd: number; private readonly entrySizeUsd: number;
+  constructor(private readonly client: Client, private readonly telemetry: TelemetryBus, private readonly ingest: RadarIngest) { this.execution = new PaperExecutionEngine(telemetry); this.minLiquidityUsd = Math.max(1, MIN_LIQUIDITY_USD); this.entrySizeUsd = Math.max(25, ENTRY_SIZE_USD); }
+  start(): void { if (this.running) return; this.running = true; void this.tick(); this.timer = setInterval(() => void this.tick(), 2_000); this.timer.unref(); console.log(JSON.stringify({ event: 'paper_strategy_started', entrySizeUsd: this.entrySizeUsd, minLiquidityUsd: this.minLiquidityUsd })); }
+  stop(): void { if (this.timer !== undefined) clearInterval(this.timer); this.timer = undefined; this.running = false; }
   listOpen(): Position[] { return this.positions.listOpen(); }
   stopEntries(): void { this.positions.emergencyStopEntries(); }
   closeAll(): Position[] { return this.positions.emergencyCloseAll(); }
 
-  private async tick(): Promise<void> {
-    try {
-      const block = await this.client.getBlockNumber();
-      this.lastBlock = block;
-      const result = await this.ingest.poll(block, 25n);
-      if (result === undefined || result.swaps.length === 0) return;
-      for (const swap of result.swaps) {
-        const key = `${swap.transactionHash}:${swap.logIndex}`;
-        if (this.seen.has(key)) continue;
-        this.seen.add(key);
-        if (this.seen.size > 5000) this.seen.delete(this.seen.values().next().value as string);
-        await this.processSwap(swap);
-      }
-      await this.markToMarket();
-    } catch (error) {
-      console.warn(JSON.stringify({ event: 'paper_strategy_error', message: error instanceof Error ? error.message : String(error) }));
-    }
-  }
+  private async tick(): Promise<void> { try { const block = await this.client.getBlockNumber(); this.lastBlock = block; const result = await this.ingest.poll(block, 25n); if (result === undefined) return; if (result.swaps.length > 0) console.log(JSON.stringify({ event: 'paper_strategy_swaps_received', count: result.swaps.length, fromBlock: result.fromBlock.toString(), toBlock: result.toBlock.toString() })); for (const swap of result.swaps) { const key = `${swap.transactionHash}:${swap.logIndex}`; if (this.seen.has(key)) continue; this.seen.add(key); if (this.seen.size > 5000) { const oldest = this.seen.values().next().value; if (typeof oldest === 'string') this.seen.delete(oldest); } await this.processSwap(swap); } await this.markToMarket(); } catch (error) { console.warn(JSON.stringify({ event: 'paper_strategy_error', message: error instanceof Error ? error.message : String(error) })); } }
 
   private async processSwap(swap: ReturnType<RadarIngest['getRecentSwaps']>[number]): Promise<void> {
     if (swap.status !== 'normalized' || swap.trader === undefined || swap.direction === 'UNKNOWN' || swap.amountIn === undefined || swap.amountOut === undefined) return;
-    const market = await this.readV2Market(swap.pool, swap.targetToken, swap.quoteToken);
-    if (market === undefined || market.priceUsd <= 0) return;
-
-    const quoteAmountRaw = swap.direction === 'BUY' ? swap.amountIn : swap.amountOut;
-    const quoteUsd = this.quoteToUsd(swap.quoteToken, quoteAmountRaw);
-    if (quoteUsd <= 0) return;
-    const flow = this.flow.process({ swap, trader: swap.trader, volumeUsd: quoteUsd, priceUsd: market.priceUsd, timestampMs: Date.now() });
-    if (flow === undefined) return;
-
-    const liquidityScore = clamp((market.liquidityUsd / this.minLiquidityUsd) * 50, 0, 100);
-    const riskScore = market.liquidityUsd >= this.minLiquidityUsd ? (market.liquidityUsd >= this.minLiquidityUsd * 4 ? 10 : 25) : 65;
-    const breakoutScore = flow.priceChangePct >= 0.5 ? clamp(70 + flow.priceChangePct * 10, 70, 100) : 0;
-    const signal = evaluateSignal({
-      flow,
-      riskScore,
-      liquidityScore,
-      breakoutScore,
-      liquidityUsd: market.liquidityUsd,
-      minLiquidityUsd: this.minLiquidityUsd,
-      minUniqueBuyerScore: MIN_UNIQUE_BUYER_SCORE,
-    });
-
-    this.telemetry.emitEvent({
-      correlationId: TelemetryBus.correlationId('SIGNAL'),
-      module: 'strategy',
-      event: 'signal_evaluated',
-      token: swap.targetToken,
-      block: this.lastBlock,
-      status: signal.entryQualified ? 'ok' : 'warning',
-      payload: { signal: signal.signal, momentum: signal.momentum.score, risk: signal.risk.score, liquidityUsd: market.liquidityUsd, uniqueBuyers: flow.uniqueBuyers, buyPressurePct: flow.buyPressurePct, volumeAccelerationPct: flow.volumeAccelerationPct, breakoutScore },
-    });
-
-    if (!signal.entryQualified || !this.positions.canEnter()) return;
-    if (this.positions.listOpen().some(position => position.token.toLowerCase() === swap.targetToken.toLowerCase())) return;
-
-    const quote = this.makePaperQuote(swap.targetToken, market.priceUsd, market.liquidityUsd);
-    const best = chooseBestQuote([quote]);
-    if (best === undefined) return;
-    const correlationId = TelemetryBus.correlationId('ENTRY');
-    const opportunity = opportunityId(++this.sequence);
-    const fill = await this.execution.buy({ side: 'BUY', token: swap.targetToken, amountUsd: this.entrySizeUsd, quote: best.quote, correlationId });
-    if (fill.fill.executedUsd <= 0) return;
-
-    const position: Position = {
-      id: `${opportunity}-POS`, opportunityId: opportunity, token: swap.targetToken, symbol: swap.targetToken.slice(0, 8), state: 'DISCOVERED',
-      entryPriceUsd: market.priceUsd, currentPriceUsd: market.priceUsd, peakPriceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd,
-      momentumAtEntry: signal.momentum.score, momentumPeak: signal.momentum.score, openedAt: Date.now(), updatedAt: Date.now(),
-    };
-    this.positions.add(position);
-    this.positions.transition(position.id, 'QUALIFIED');
-    this.positions.transition(position.id, 'SIGNAL');
-    this.positions.transition(position.id, 'ENTRY');
-    this.positions.transition(position.id, 'OPEN');
-    this.telemetry.emitEvent({ correlationId, module: 'positions', event: 'paper_position_opened', token: swap.targetToken, status: 'ok', payload: { positionId: position.id, opportunityId: opportunity, entryPriceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentum: signal.momentum.score } });
-    console.log(JSON.stringify({ event: 'paper_entry', positionId: position.id, token: swap.targetToken, priceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentum: signal.momentum.score }));
+    const market = await this.readMarket(swap.protocol, swap.pool, swap.targetToken, swap.quoteToken); if (market === undefined || market.priceUsd <= 0) return;
+    const quoteAmountRaw = swap.direction === 'BUY' ? swap.amountIn : swap.amountOut; const quoteUsd = this.quoteToUsd(swap.quoteToken, quoteAmountRaw); if (quoteUsd <= 0) return;
+    const flow = this.flow.process({ swap, trader: swap.trader, volumeUsd: quoteUsd, priceUsd: market.priceUsd, timestampMs: Date.now() }); if (flow === undefined) return;
+    const liquidityScore = clamp((market.liquidityUsd / this.minLiquidityUsd) * 50, 0, 100); const riskScore = market.liquidityUsd >= this.minLiquidityUsd ? (market.liquidityUsd >= this.minLiquidityUsd * 4 ? 10 : 25) : 65; const breakoutScore = flow.priceChangePct >= 0.5 ? clamp(70 + flow.priceChangePct * 10, 70, 100) : 0;
+    const signal = evaluateSignal({ flow, riskScore, liquidityScore, breakoutScore, liquidityUsd: market.liquidityUsd, minLiquidityUsd: this.minLiquidityUsd, minUniqueBuyerScore: MIN_UNIQUE_BUYER_SCORE });
+    this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('SIGNAL'), module: 'strategy', event: 'signal_evaluated', token: swap.targetToken, block: this.lastBlock, status: signal.entryQualified ? 'ok' : 'warning', payload: { signal: signal.signal, momentum: signal.momentum.score, risk: signal.risk.score, liquidityUsd: market.liquidityUsd, uniqueBuyers: flow.uniqueBuyers, buyPressurePct: flow.buyPressurePct, volumeAccelerationPct: flow.volumeAccelerationPct, breakoutScore, protocol: swap.protocol } });
+    if (!signal.entryQualified || !this.positions.canEnter()) return; if (this.positions.listOpen().some(position => position.token.toLowerCase() === swap.targetToken.toLowerCase())) return;
+    const best = chooseBestQuote([this.makePaperQuote(swap.targetToken, market.priceUsd, market.liquidityUsd)]); if (best === undefined) return; const correlationId = TelemetryBus.correlationId('ENTRY'); const opportunity = opportunityId(++this.sequence); const fill = await this.execution.buy({ side: 'BUY', token: swap.targetToken, amountUsd: this.entrySizeUsd, quote: best.quote, correlationId }); if (fill.fill.executedUsd <= 0) return;
+    const position: Position = { id: `${opportunity}-POS`, opportunityId: opportunity, token: swap.targetToken, symbol: swap.targetToken.slice(0, 8), state: 'DISCOVERED', entryPriceUsd: market.priceUsd, currentPriceUsd: market.priceUsd, peakPriceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentumAtEntry: signal.momentum.score, momentumPeak: signal.momentum.score, openedAt: Date.now(), updatedAt: Date.now() };
+    this.positions.add(position); this.positions.transition(position.id, 'QUALIFIED'); this.positions.transition(position.id, 'SIGNAL'); this.positions.transition(position.id, 'ENTRY'); this.positions.transition(position.id, 'OPEN'); this.telemetry.emitEvent({ correlationId, module: 'positions', event: 'paper_position_opened', token: swap.targetToken, status: 'ok', payload: { positionId: position.id, opportunityId: opportunity, entryPriceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentum: signal.momentum.score } }); console.log(JSON.stringify({ event: 'paper_entry', positionId: position.id, token: swap.targetToken, priceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentum: signal.momentum.score }));
   }
 
-  private async markToMarket(): Promise<void> {
-    for (const position of this.positions.listOpen()) {
-      const market = await this.readTokenMarket(position.token);
-      if (market === undefined) continue;
-      const flow = this.flow.process({
-        swap: { status: 'normalized', protocol: V2_PROTOCOL, eventName: 'mark', pool: '0x0000000000000000000000000000000000000000', transactionHash: '0x0000000000000000000000000000000000000000000000000000000000000000', logIndex: 0, direction: 'BUY', targetToken: position.token, quoteToken: USDG as Addr, amountIn: 1n, amountOut: 1n, trader: '0x0000000000000000000000000000000000000001', reason: undefined },
-        trader: '0x0000000000000000000000000000000000000001', volumeUsd: 1, priceUsd: market.priceUsd, timestampMs: Date.now(),
-      });
-      if (flow === undefined) continue;
-      const momentum = evaluateSignal({ flow, riskScore: 10, liquidityScore: 100, breakoutScore: 70, liquidityUsd: market.liquidityUsd, minLiquidityUsd: this.minLiquidityUsd, minUniqueBuyerScore: MIN_UNIQUE_BUYER_SCORE }).momentum.score;
-      const update = this.positions.updateMarket(position.id, { priceUsd: market.priceUsd, momentum, volumeAcceleration: flow.volumeAccelerationPct, timestamp: Date.now() });
-      if (update.decision.action === 'SELL') {
-        const quote = this.makePaperQuote(position.token, market.priceUsd, market.liquidityUsd);
-        const best = chooseBestQuote([quote]);
-        if (best === undefined) continue;
-        await this.execution.sell({ side: 'SELL', token: position.token, amountUsd: position.sizeUsd, quote: best.quote, correlationId: TelemetryBus.correlationId('EXIT') });
-        this.positions.close(position.id);
-        console.log(JSON.stringify({ event: 'paper_exit', positionId: position.id, priceUsd: market.priceUsd, reason: update.decision.reason }));
-      }
-    }
-  }
+  private async markToMarket(): Promise<void> { for (const position of this.positions.listOpen()) { const market = await this.readTokenMarket(position.token); if (market === undefined) continue; const flow = this.flow.process({ swap: { status: 'normalized', protocol: V2_PROTOCOL, eventName: 'mark', pool: '0x0000000000000000000000000000000000000000', transactionHash: '0x0000000000000000000000000000000000000000000000000000000000000000', logIndex: 0, direction: 'BUY', targetToken: position.token, quoteToken: USDG as Addr, amountIn: 1n, amountOut: 1n, trader: '0x0000000000000000000000000000000000000001', reason: undefined }, trader: '0x0000000000000000000000000000000000000001', volumeUsd: 1, priceUsd: market.priceUsd, timestampMs: Date.now() }); if (flow === undefined) continue; const momentum = evaluateSignal({ flow, riskScore: 10, liquidityScore: 100, breakoutScore: 70, liquidityUsd: market.liquidityUsd, minLiquidityUsd: this.minLiquidityUsd, minUniqueBuyerScore: MIN_UNIQUE_BUYER_SCORE }).momentum.score; const update = this.positions.updateMarket(position.id, { priceUsd: market.priceUsd, momentum, volumeAcceleration: flow.volumeAccelerationPct, timestamp: Date.now() }); if (update.decision.action === 'SELL') { const best = chooseBestQuote([this.makePaperQuote(position.token, market.priceUsd, market.liquidityUsd)]); if (best === undefined) continue; await this.execution.sell({ side: 'SELL', token: position.token, amountUsd: position.sizeUsd, quote: best.quote, correlationId: TelemetryBus.correlationId('EXIT') }); this.positions.close(position.id); console.log(JSON.stringify({ event: 'paper_exit', positionId: position.id, priceUsd: market.priceUsd, reason: update.decision.reason })); } } }
 
-  private makePaperQuote(token: Addr, priceUsd: number, liquidityUsd: number): ExecutionQuote {
-    const fee = this.entrySizeUsd * 0.003;
-    const impact = this.entrySizeUsd * Math.min(0.03, this.entrySizeUsd / Math.max(liquidityUsd, 1));
-    const slippage = this.entrySizeUsd * 0.005;
-    return { dexId: 'uniswap-v2-paper', token, amountInUsd: this.entrySizeUsd, expectedAmountOutUsd: this.entrySizeUsd, executablePriceUsd: priceUsd, dexFeeUsd: fee, slippageUsd: slippage, priceImpactUsd: impact, gasEstimate: 120_000n, gasPriceWei: 1_000_000_000n, nativeTokenUsd: PAPER_ETH_USD, quotedAt: Date.now(), latencyMs: 25 };
-  }
-
-  private quoteToUsd(token: Addr | undefined, amount: bigint): number {
-    if (token === undefined) return 0;
-    const normalized = token.toLowerCase();
-    if (normalized === USDG) return Number(amount) / 1e18;
-    if (normalized === WETH) return (Number(amount) / 1e18) * PAPER_ETH_USD;
-    return 0;
-  }
-
-  private async readV2Market(pool: Addr, target: Addr, quote: Addr | undefined): Promise<PoolMarket | undefined> {
-    if (quote === undefined) return undefined;
-    try {
-      const [token0, token1, reserves, targetDecimals] = await Promise.all([
-        this.client.readContract({ address: pool, abi: V2, functionName: 'token0' }),
-        this.client.readContract({ address: pool, abi: V2, functionName: 'token1' }),
-        this.client.readContract({ address: pool, abi: V2, functionName: 'getReserves' }),
-        this.client.readContract({ address: target, abi: ERC20, functionName: 'decimals' }),
-      ]);
-      const [reserve0, reserve1] = reserves as readonly [bigint, bigint, number];
-      const targetIs0 = (token0 as string).toLowerCase() === target.toLowerCase();
-      const targetReserve = targetIs0 ? reserve0 : reserve1;
-      const quoteReserve = targetIs0 ? reserve1 : reserve0;
-      const quoteUsd = this.quoteToUsd(quote, quoteReserve);
-      const targetUnits = Number(targetReserve) / 10 ** Number(targetDecimals);
-      if (targetUnits <= 0 || quoteUsd <= 0) return undefined;
-      return { liquidityUsd: quoteUsd * 2, priceUsd: quoteUsd / targetUnits, quotePriceUsd: normalizedQuotePrice(quote) };
-    } catch { return undefined; }
-  }
-
-  private async readTokenMarket(token: Addr): Promise<PoolMarket | undefined> {
-    return undefined;
-  }
+  private makePaperQuote(token: Addr, priceUsd: number, liquidityUsd: number): ExecutionQuote { const fee = this.entrySizeUsd * 0.003; const impact = this.entrySizeUsd * Math.min(0.03, this.entrySizeUsd / Math.max(liquidityUsd, 1)); const slippage = this.entrySizeUsd * 0.005; return { dexId: 'paper-router', token, amountInUsd: this.entrySizeUsd, expectedAmountOutUsd: this.entrySizeUsd, executablePriceUsd: priceUsd, dexFeeUsd: fee, slippageUsd: slippage, priceImpactUsd: impact, gasEstimate: 120_000n, gasPriceWei: 1_000_000_000n, nativeTokenUsd: PAPER_ETH_USD, quotedAt: Date.now(), latencyMs: 25 }; }
+  private quoteToUsd(token: Addr | undefined, amount: bigint): number { if (token === undefined) return 0; const normalized = token.toLowerCase(); if (normalized === USDG) return Number(amount) / 1e18; if (normalized === WETH) return (Number(amount) / 1e18) * PAPER_ETH_USD; return 0; }
+  private async readMarket(protocol: string | undefined, pool: Addr, target: Addr, quote: Addr | undefined): Promise<PoolMarket | undefined> { return protocol === 'uniswap-v3' ? this.readV3Market(pool, target, quote) : this.readV2Market(pool, target, quote); }
+  private async readV2Market(pool: Addr, target: Addr, quote: Addr | undefined): Promise<PoolMarket | undefined> { if (quote === undefined) return undefined; try { const [token0, token1, reserves, targetDecimals] = await Promise.all([this.client.readContract({ address: pool, abi: V2, functionName: 'token0' }), this.client.readContract({ address: pool, abi: V2, functionName: 'token1' }), this.client.readContract({ address: pool, abi: V2, functionName: 'getReserves' }), this.client.readContract({ address: target, abi: ERC20, functionName: 'decimals' })]); const [reserve0, reserve1] = reserves as readonly [bigint, bigint, number]; const targetIs0 = (token0 as string).toLowerCase() === target.toLowerCase(); const targetReserve = targetIs0 ? reserve0 : reserve1; const quoteReserve = targetIs0 ? reserve1 : reserve0; const quoteUsd = this.quoteToUsd(quote, quoteReserve); const targetUnits = Number(targetReserve) / 10 ** Number(targetDecimals); if (targetUnits <= 0 || quoteUsd <= 0) return undefined; return { liquidityUsd: quoteUsd * 2, priceUsd: quoteUsd / targetUnits, quotePriceUsd: normalizedQuotePrice(quote) }; } catch { return undefined; } }
+  private async readV3Market(pool: Addr, target: Addr, quote: Addr | undefined): Promise<PoolMarket | undefined> { if (quote === undefined) return undefined; try { const [token0, token1, slot0, liquidity, decimals0, decimals1] = await Promise.all([this.client.readContract({ address: pool, abi: V3, functionName: 'token0' }), this.client.readContract({ address: pool, abi: V3, functionName: 'token1' }), this.client.readContract({ address: pool, abi: V3, functionName: 'slot0' }), this.client.readContract({ address: pool, abi: V3, functionName: 'liquidity' }), this.client.readContract({ address: token0 as Addr, abi: ERC20, functionName: 'decimals' }), this.client.readContract({ address: token1 as Addr, abi: ERC20, functionName: 'decimals' })]); const sqrtPriceX96 = (slot0 as readonly [bigint, number, number, number, number, number, boolean])[0]; const pRaw = Number(sqrtPriceX96) ** 2 / 2 ** 192; if (!Number.isFinite(pRaw) || pRaw <= 0) return undefined; const d0 = Number(decimals0); const d1 = Number(decimals1); const targetIs0 = (token0 as string).toLowerCase() === target.toLowerCase(); const quoteUsd = normalizedQuotePrice(quote); const priceUsd = targetIs0 ? pRaw * 10 ** (d0 - d1) * quoteUsd : (1 / pRaw) * 10 ** (d1 - d0) * quoteUsd; const L = Number(liquidity); if (!Number.isFinite(L) || L <= 0 || priceUsd <= 0) return undefined; const sqrtP = Number(sqrtPriceX96) / 2 ** 96; const virtual0 = L / sqrtP / 10 ** d0; const virtual1 = L * sqrtP / 10 ** d1; const liqUsd = targetIs0 ? (virtual0 * priceUsd + virtual1 * quoteUsd) : (virtual0 * quoteUsd + virtual1 * priceUsd); return { liquidityUsd: finite(liqUsd), priceUsd: finite(priceUsd), quotePriceUsd: quoteUsd }; } catch { return undefined; } }
+  private async readTokenMarket(_token: Addr): Promise<PoolMarket | undefined> { return undefined; }
 }
-
 function normalizedQuotePrice(token: Addr): number { return token.toLowerCase() === USDG ? 1 : PAPER_ETH_USD; }
