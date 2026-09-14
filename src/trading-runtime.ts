@@ -23,6 +23,11 @@ const PAPER_SLIPPAGE_PCT = Math.max(0, Number(process.env.PAPER_SLIPPAGE_PCT ?? 
 const PAPER_GAS_LIMIT = BigInt(Math.max(21_000, Math.floor(Number(process.env.PAPER_GAS_LIMIT ?? 120_000))));
 const PAPER_GAS_PRICE_GWEI = BigInt(Math.max(1, Math.floor(Number(process.env.PAPER_GAS_PRICE_GWEI ?? 1))) * 1_000_000_000);
 const V2_PROTOCOL = 'uniswap-v2';
+const TICK_INTERVAL_MS = 2_000;
+const POSITION_MARK_INTERVAL_MS = 1_000;
+const SWAP_WORKER_CONCURRENCY = 4;
+const SWAP_TIMEOUT_MS = 8_000;
+const MARKET_CACHE_TTL_MS = 750;
 type Client = PublicClient<Transport>;
 type Addr = `0x${string}`;
 interface PoolMarket { liquidityUsd: number; priceUsd: number; quotePriceUsd: number; }
@@ -38,6 +43,8 @@ export class PaperTradingRuntime {
   private readonly seen = new Set<string>();
   private readonly positionMarkets = new Map<string, PositionMarket>();
   private readonly latestFlows = new Map<string, FlowSnapshot>();
+  private readonly marketCache = new Map<string, { market: PoolMarket; expiresAt: number }>();
+  private readonly marketInFlight = new Map<string, Promise<PoolMarket | undefined>>();
   private sequence = 0;
   private running = false;
   private ticking = false;
@@ -59,11 +66,11 @@ export class PaperTradingRuntime {
     this.running = true;
     void this.tick();
     void this.markToMarketSafely();
-    this.timer = setInterval(() => void this.tick(), 2_000);
+    this.timer = setInterval(() => void this.tick(), TICK_INTERVAL_MS);
     this.timer.unref();
-    this.markTimer = setInterval(() => void this.markToMarketSafely(), 1_000);
+    this.markTimer = setInterval(() => void this.markToMarketSafely(), POSITION_MARK_INTERVAL_MS);
     this.markTimer.unref();
-    console.log(JSON.stringify({ event: 'paper_strategy_started', entrySizeUsd: this.entrySizeUsd, minLiquidityUsd: this.minLiquidityUsd, positionMonitorIntervalMs: 1000, tickIntervalMs: 2000, tickOverlapGuard: true, exitConfirmations: Math.max(2, Number(process.env.PAPER_EXIT_CONFIRMATIONS ?? 3)), execution: { dexFeePct: PAPER_DEX_FEE_PCT, slippagePct: PAPER_SLIPPAGE_PCT, gasLimit: PAPER_GAS_LIMIT.toString(), gasPriceWei: PAPER_GAS_PRICE_GWEI.toString() } }));
+    console.log(JSON.stringify({ event: 'paper_strategy_started', entrySizeUsd: this.entrySizeUsd, minLiquidityUsd: this.minLiquidityUsd, positionMonitorIntervalMs: POSITION_MARK_INTERVAL_MS, tickIntervalMs: TICK_INTERVAL_MS, tickOverlapGuard: false, swapWorkerConcurrency: SWAP_WORKER_CONCURRENCY, swapTimeoutMs: SWAP_TIMEOUT_MS, marketCacheTtlMs: MARKET_CACHE_TTL_MS, exitConfirmations: Math.max(2, Number(process.env.PAPER_EXIT_CONFIRMATIONS ?? 3)), execution: { dexFeePct: PAPER_DEX_FEE_PCT, slippagePct: PAPER_SLIPPAGE_PCT, gasLimit: PAPER_GAS_LIMIT.toString(), gasPriceWei: PAPER_GAS_PRICE_GWEI.toString() } }));
   }
 
   stop(): void {
@@ -92,29 +99,54 @@ export class PaperTradingRuntime {
   }
 
   private async tick(): Promise<void> {
-    if (this.ticking) {
-      console.log(JSON.stringify({ event: 'paper_strategy_tick_skipped', reason: 'previous_tick_still_running' }));
-      return;
-    }
+    if (this.ticking) return;
     this.ticking = true;
+    const startedAt = Date.now();
+    this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('TICK'), module: 'strategy', event: 'paper_strategy_tick_started', block: this.lastBlock, status: 'ok', payload: { intervalMs: TICK_INTERVAL_MS } });
     try {
       const block = await this.client.getBlockNumber();
       this.lastBlock = block;
       const result = await this.ingest.poll(block, 25n);
       if (result === undefined) return;
       if (result.swaps.length > 0) console.log(JSON.stringify({ event: 'paper_strategy_swaps_received', count: result.swaps.length, fromBlock: result.fromBlock.toString(), toBlock: result.toBlock.toString() }));
+      const pending: Promise<void>[] = [];
       for (const swap of result.swaps) {
         const key = `${swap.transactionHash}:${swap.logIndex}`;
-        if (this.seen.has(key)) continue;
+        if (this.seen.has(key)) {
+          this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('DUP'), module: 'strategy', event: 'duplicate_swap_skipped', token: swap.targetToken, block: this.lastBlock, status: 'warning', payload: { key } });
+          continue;
+        }
         this.seen.add(key);
         if (this.seen.size > 5000) { const oldest = this.seen.values().next().value; if (typeof oldest === 'string') this.seen.delete(oldest); }
-        await this.processSwap(swap);
+        pending.push(this.runSwapWithTimeout(swap));
+        if (pending.length >= SWAP_WORKER_CONCURRENCY) {
+          await Promise.allSettled(pending.splice(0, SWAP_WORKER_CONCURRENCY));
+        }
       }
+      if (pending.length > 0) await Promise.allSettled(pending);
     } catch (error) {
       console.warn(JSON.stringify({ event: 'paper_strategy_error', message: error instanceof Error ? error.message : String(error) }));
       this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('STRATEGY'), module: 'strategy', event: 'paper_strategy_error', block: this.lastBlock, status: 'error', payload: { message: error instanceof Error ? error.message : String(error) } });
     } finally {
+      const durationMs = Date.now() - startedAt;
+      this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('TICK'), module: 'strategy', event: 'paper_strategy_tick_completed', block: this.lastBlock, status: 'ok', payload: { durationMs } });
       this.ticking = false;
+    }
+  }
+
+  private async runSwapWithTimeout(swap: ReturnType<RadarIngest['getRecentSwaps']>[number]): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.processSwap(swap),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`swap processing timeout after ${SWAP_TIMEOUT_MS}ms`)), SWAP_TIMEOUT_MS); }),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(JSON.stringify({ event: 'paper_swap_processing_error', token: swap.targetToken, message }));
+      this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('SWAP'), module: 'strategy', event: 'paper_swap_processing_error', token: swap.targetToken, block: this.lastBlock, status: 'error', payload: { message } });
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 
@@ -204,7 +236,21 @@ export class PaperTradingRuntime {
   }
 
   private async readMarket(protocol: string | undefined, pool: Addr, target: Addr, quote: Addr | undefined): Promise<PoolMarket | undefined> {
-    return protocol === 'uniswap-v3' ? this.readV3Market(pool, target, quote) : this.readV2Market(pool, target, quote);
+    if (quote === undefined) return undefined;
+    const key = `${protocol ?? V2_PROTOCOL}:${pool.toLowerCase()}:${target.toLowerCase()}:${quote.toLowerCase()}`;
+    const cached = this.marketCache.get(key);
+    if (cached !== undefined && cached.expiresAt > Date.now()) return cached.market;
+    const existing = this.marketInFlight.get(key);
+    if (existing !== undefined) return existing;
+    const request = protocol === 'uniswap-v3' ? this.readV3Market(pool, target, quote) : this.readV2Market(pool, target, quote);
+    this.marketInFlight.set(key, request);
+    try {
+      const market = await request;
+      if (market !== undefined && market.priceUsd > 0) this.marketCache.set(key, { market, expiresAt: Date.now() + MARKET_CACHE_TTL_MS });
+      return market;
+    } finally {
+      this.marketInFlight.delete(key);
+    }
   }
 
   private async readV2Market(pool: Addr, target: Addr, quote: Addr | undefined): Promise<PoolMarket | undefined> {
