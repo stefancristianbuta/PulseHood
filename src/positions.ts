@@ -25,6 +25,9 @@ export class PositionManager {
 
   add(position: Position): void {
     if (this.positions.has(position.id)) throw new Error(`Position already exists: ${position.id}`);
+    const token = position.token.toLowerCase();
+    const duplicate = [...this.positions.values()].some((existing) => existing.token.toLowerCase() === token && ACTIVE_STATES.has(existing.state));
+    if (duplicate) throw new Error(`Open position already exists for token: ${position.token}`);
     this.positions.set(position.id, { ...position });
     this.momentumExitConfirmations.delete(position.id);
     this.profitLockPrice.delete(position.id);
