@@ -25,7 +25,7 @@ const PAPER_GAS_PRICE_GWEI = BigInt(Math.max(1, Math.floor(Number(process.env.PA
 const V2_PROTOCOL = 'uniswap-v2';
 const TICK_INTERVAL_MS = 2_000;
 const POSITION_MARK_INTERVAL_MS = 1_000;
-const SWAP_WORKER_CONCURRENCY = 4;
+const SWAP_WORKER_CONCURRENCY = 1;
 const SWAP_TIMEOUT_MS = 8_000;
 const MARKET_CACHE_TTL_MS = 750;
 type Client = PublicClient<Transport>;
@@ -70,7 +70,7 @@ export class PaperTradingRuntime {
     this.timer.unref();
     this.markTimer = setInterval(() => void this.markToMarketSafely(), POSITION_MARK_INTERVAL_MS);
     this.markTimer.unref();
-    console.log(JSON.stringify({ event: 'paper_strategy_started', entrySizeUsd: this.entrySizeUsd, minLiquidityUsd: this.minLiquidityUsd, positionMonitorIntervalMs: POSITION_MARK_INTERVAL_MS, tickIntervalMs: TICK_INTERVAL_MS, tickOverlapGuard: false, swapWorkerConcurrency: SWAP_WORKER_CONCURRENCY, swapTimeoutMs: SWAP_TIMEOUT_MS, marketCacheTtlMs: MARKET_CACHE_TTL_MS, exitConfirmations: Math.max(2, Number(process.env.PAPER_EXIT_CONFIRMATIONS ?? 3)), execution: { dexFeePct: PAPER_DEX_FEE_PCT, slippagePct: PAPER_SLIPPAGE_PCT, gasLimit: PAPER_GAS_LIMIT.toString(), gasPriceWei: PAPER_GAS_PRICE_GWEI.toString() } }));
+    console.log(JSON.stringify({ event: 'paper_strategy_started', entrySizeUsd: this.entrySizeUsd, minLiquidityUsd: this.minLiquidityUsd, positionMonitorIntervalMs: POSITION_MARK_INTERVAL_MS, tickIntervalMs: TICK_INTERVAL_MS, tickOverlapGuard: true, swapWorkerConcurrency: SWAP_WORKER_CONCURRENCY, swapTimeoutMs: SWAP_TIMEOUT_MS, marketCacheTtlMs: MARKET_CACHE_TTL_MS, exitConfirmations: Math.max(2, Number(process.env.PAPER_EXIT_CONFIRMATIONS ?? 3)), execution: { dexFeePct: PAPER_DEX_FEE_PCT, slippagePct: PAPER_SLIPPAGE_PCT, gasLimit: PAPER_GAS_LIMIT.toString(), gasPriceWei: PAPER_GAS_PRICE_GWEI.toString() } }));
   }
 
   stop(): void {
