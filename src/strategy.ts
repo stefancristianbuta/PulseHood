@@ -8,18 +8,42 @@ export interface EntryPolicyInput {
   buyPressurePct: number;
   volumeAcceleration: number;
   breakoutConfirmed: boolean;
+  priceChangePct: number;
+  microPriceChangePct: number;
+  buyCount: number;
+  uniqueBuyers: number;
+  largestBuyerVolumePct: number;
   minLiquidityUsd: number;
   minUniqueBuyerScore: number;
 }
 
+export const V2_ENTRY_DEFAULTS = {
+  minMomentum: 78,
+  maxRisk: 20,
+  minLiquidityUsd: 30_000,
+  minUniqueBuyerScore: 40,
+  minBuyPressurePct: 68,
+  minVolumeAccelerationPct: 10,
+  minPriceChangePct: 0.8,
+  minMicroPriceChangePct: 0.25,
+  minBuyCount: 4,
+  minUniqueBuyers: 4,
+  maxLargestBuyerVolumePct: 45,
+};
+
 export function qualifiesForEntry(input: EntryPolicyInput): boolean {
   return (
-    input.momentum.score >= 82 &&
-    input.riskScore <= 25 &&
-    input.liquidityUsd >= input.minLiquidityUsd &&
-    input.uniqueBuyerScore >= Math.max(30, input.minUniqueBuyerScore) &&
-    input.buyPressurePct >= 65 &&
-    input.volumeAcceleration > 5 &&
+    input.momentum.score >= V2_ENTRY_DEFAULTS.minMomentum &&
+    input.riskScore <= V2_ENTRY_DEFAULTS.maxRisk &&
+    input.liquidityUsd >= Math.max(V2_ENTRY_DEFAULTS.minLiquidityUsd, input.minLiquidityUsd) &&
+    input.uniqueBuyerScore >= Math.max(V2_ENTRY_DEFAULTS.minUniqueBuyerScore, input.minUniqueBuyerScore) &&
+    input.buyPressurePct >= V2_ENTRY_DEFAULTS.minBuyPressurePct &&
+    input.volumeAcceleration >= V2_ENTRY_DEFAULTS.minVolumeAccelerationPct &&
+    input.priceChangePct >= V2_ENTRY_DEFAULTS.minPriceChangePct &&
+    input.microPriceChangePct >= V2_ENTRY_DEFAULTS.minMicroPriceChangePct &&
+    input.buyCount >= V2_ENTRY_DEFAULTS.minBuyCount &&
+    input.uniqueBuyers >= V2_ENTRY_DEFAULTS.minUniqueBuyers &&
+    input.largestBuyerVolumePct <= V2_ENTRY_DEFAULTS.maxLargestBuyerVolumePct &&
     input.breakoutConfirmed
   );
 }
@@ -30,14 +54,16 @@ export interface ExitPolicyConfig {
   baseTrailingPct: number;
   tightTrailingPct: number;
   maxVolumeDeterioration: number;
+  earlyMomentumDrop: number;
 }
 
 export const DEFAULT_EXIT_POLICY: ExitPolicyConfig = {
-  tightenMomentumDrop: 10,
-  sellMomentumDrop: 20,
-  baseTrailingPct: 6,
-  tightTrailingPct: 3,
-  maxVolumeDeterioration: -10,
+  tightenMomentumDrop: 8,
+  sellMomentumDrop: 16,
+  baseTrailingPct: 5,
+  tightTrailingPct: 2.5,
+  maxVolumeDeterioration: -8,
+  earlyMomentumDrop: 8,
 };
 
 export function decideExit(
