@@ -22,6 +22,15 @@ export const CHAIN = defineChain({
 export const CHAIN_RPC_PUBLIC = 'https://rpc.mainnet.chain.robinhood.com';
 export const CHAIN_SEQUENCER_FEED_PUBLIC = 'wss://feed.mainnet.chain.robinhood.com';
 
+// Public fallbacks are intentionally used only as a bootstrap path. Robinhood documents
+// its public RPC as rate-limited and recommends a dedicated provider for production.
+// These two additional keyless endpoints reduce single-endpoint failure during development.
+const DEFAULT_RPC_URLS = [
+  CHAIN_RPC_PUBLIC,
+  'https://rpc-robinhood.blockmachine.io',
+  'https://robinhood-mainnet-rpc.blockreq.com/v1/rpc/public',
+];
+
 const splitUrls = (value: string | undefined): string[] =>
   (value ?? '')
     .split(',')
@@ -54,7 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     chainId: CHAIN.id,
     tradingMode,
     liveEnabled,
-    rpcUrls: rpcUrls.length > 0 ? rpcUrls : [CHAIN_RPC_PUBLIC],
+    rpcUrls: rpcUrls.length > 0 ? rpcUrls : DEFAULT_RPC_URLS,
     wsUrls: wsUrls.length > 0 ? wsUrls : [CHAIN_SEQUENCER_FEED_PUBLIC],
     maxRpcLatencyMs: Number(env.MAX_RPC_LATENCY_MS ?? 750),
     maxBlockLag: Number(env.MAX_BLOCK_LAG ?? 3),
