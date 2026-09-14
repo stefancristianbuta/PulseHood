@@ -5,7 +5,7 @@
   "description": "PulseHood V1 - Robinhood Chain momentum radar and paper trading platform",
   "type": "module",
   "scripts": {
-    "build": "node scripts/fix-token-labels.mjs && node scripts/fix-v4-market.mjs && node scripts/fix-v4-types.mjs && tsc --noEmit",
+    "build": "node scripts/fix-token-labels.mjs && node scripts/fix-v4-market.mjs && node scripts/fix-v4-types.mjs && node scripts/fix-v4-final-types.mjs && tsc --noEmit",
     "test": "node --test --import tsx src/**/*.test.ts",
     "dev": "tsx src/bootstrap.ts",
     "start": "tsx src/bootstrap.ts"
