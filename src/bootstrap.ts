@@ -48,7 +48,7 @@ async function resolveCandidateSymbol(address: string, candidate: Record<string,
       candidate.token = clean;
     }
   } catch {
-    // Keep the address out of the display name. A later candidate update retries the lookup.
+    // Deliberately keep the neutral TOKEN label. Never expose the contract as the coin name.
   }
 }
 
@@ -56,7 +56,8 @@ function updateCandidate(event: Parameters<TelemetryBus['emitEvent']>[0]): void 
   if (dashboard === undefined || event.token === undefined) return;
   const key = event.token.toLowerCase();
   const previous = dashboard.candidates.get(key) ?? {
-    token: event.token,
+    // The map key is the canonical contract identity. The token field is display-only.
+    token: 'TOKEN',
     protocol: String(event.payload?.protocol ?? 'unknown'),
     pool: String(event.payload?.pool ?? 'unknown'),
     direction: String(event.payload?.direction ?? '—'),
