@@ -72,6 +72,7 @@ export class PaperExecutionEngine implements ExecutionEngine {
         dexId: order.quote.dexId,
         requestedUsd: order.amountUsd,
         executedUsd: fill.executedUsd,
+        executionPriceUsd: fill.executionPriceUsd,
         totalCostUsd: cost.totalUsd,
         gasUsd,
       },
