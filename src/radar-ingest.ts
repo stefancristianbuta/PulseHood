@@ -40,19 +40,23 @@ export class RadarIngest {
       const length = await this.client.readContract({ address: V2_FACTORY, abi: V2_FACTORY_ABI, functionName: 'allPairsLength' });
       const total = Number(length);
       const start = Math.max(0, total - 20);
-      const selected: Array<{ pair: `0x${string}`; token0: `0x${string}`; token1: `0x${string}` }> = [];
-      for (let index = start; index < total; index += 1) {
+      const indexes = Array.from({ length: Math.max(0, total - start) }, (_, offset) => start + offset);
+      const inspected = await Promise.all(indexes.map(async (index) => {
         try {
           const pair = await this.client.readContract({ address: V2_FACTORY, abi: V2_FACTORY_ABI, functionName: 'allPairs', args: [BigInt(index)] }) as `0x${string}`;
           const [token0, token1] = await Promise.all([
             this.client.readContract({ address: pair, abi: V2_PAIR_ABI, functionName: 'token0' }),
             this.client.readContract({ address: pair, abi: V2_PAIR_ABI, functionName: 'token1' }),
           ]);
-          if (isQuote(token0 as `0x${string}`) !== isQuote(token1 as `0x${string}`)) selected.push({ pair, token0: token0 as `0x${string}`, token1: token1 as `0x${string}` });
-        } catch (error) { console.warn(JSON.stringify({ event: 'pool_seed_v2_pair_error', index, message: error instanceof Error ? error.message : String(error) })); }
-      }
+          if (isQuote(token0 as `0x${string}`) !== isQuote(token1 as `0x${string}`)) return { pair, token0: token0 as `0x${string}`, token1: token1 as `0x${string}` };
+        } catch (error) {
+          console.warn(JSON.stringify({ event: 'pool_seed_v2_pair_error', index, message: error instanceof Error ? error.message : String(error) }));
+        }
+        return undefined;
+      }));
+      const selected = inspected.filter((value): value is { pair: `0x${string}`; token0: `0x${string}`; token1: `0x${string}` } => value !== undefined);
       for (const pair of selected.slice(-10)) { this.addPool(pair.pair, 'uniswap-v2'); this.poolTokens.set(pair.pair.toLowerCase(), { token0: pair.token0, token1: pair.token1 }); }
-      console.log(JSON.stringify({ event: 'pool_seed_v2', totalPairs: total, inspectedPairs: Math.max(0, total - start), quotePairs: selected.length, selectedPools: Math.min(10, selected.length) }));
+      console.log(JSON.stringify({ event: 'pool_seed_v2', totalPairs: total, inspectedPairs: indexes.length, quotePairs: selected.length, selectedPools: Math.min(10, selected.length) }));
     } catch (error) { console.warn(JSON.stringify({ event: 'pool_seed_v2_error', message: error instanceof Error ? error.message : String(error) })); }
     this.seeded = true;
   }
@@ -92,39 +96,20 @@ export class RadarIngest {
     const scanTo = fromBlock + maxRange - 1n < toBlock ? fromBlock + maxRange - 1n : toBlock;
     const poolRefs = [...this.pools.values()];
     if (poolRefs.length === 0) { this.lastBlock = scanTo; return { swaps: [], fromBlock, toBlock: scanTo }; }
-    const groups = [
-      poolRefs.filter((pool) => pool.protocol === 'uniswap-v2'),
-      poolRefs.filter((pool) => pool.protocol === 'uniswap-v3'),
-    ].filter((group) => group.length > 0);
-    const logResults = await Promise.all(groups.map(async (group) => {
-      const first = group[0];
-      if (first === undefined) throw new Error('Unexpected empty pool group');
-      const abi = first.protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP;
-      const logs = await this.getLogsAdaptive(group, abi, fromBlock, scanTo);
-      return { pools: group, abi, logs };
-    }));
+    const groups = [poolRefs.filter((pool) => pool.protocol === 'uniswap-v2'), poolRefs.filter((pool) => pool.protocol === 'uniswap-v3')].filter((group) => group.length > 0);
+    const logResults = await Promise.all(groups.map(async (group) => { const first = group[0]; if (first === undefined) throw new Error('Unexpected empty pool group'); const abi = first.protocol === 'uniswap-v2' ? V2_SWAP : V3_SWAP; const logs = await this.getLogsAdaptive(group, abi, fromBlock, scanTo); return { pools: group, abi, logs }; }));
     const protocolByPool = new Map(poolRefs.map((pool) => [pool.address.toLowerCase(), pool.protocol]));
     const swaps: NormalizedSwap[] = [];
     for (const { abi, logs } of logResults) {
       for (const log of logs) {
         if (log.transactionHash === null || log.logIndex === undefined) continue;
         try {
-          const poolAddress = log.address.toLowerCase();
-          const protocol = protocolByPool.get(poolAddress);
-          if (protocol === undefined) continue;
+          const poolAddress = log.address.toLowerCase(); const protocol = protocolByPool.get(poolAddress); if (protocol === undefined) continue;
           let tokens = this.poolTokens.get(poolAddress);
-          if (tokens === undefined) {
-            const [token0, token1] = await Promise.all([
-              this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token0' }),
-              this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token1' }),
-            ]);
-            tokens = { token0: token0 as `0x${string}`, token1: token1 as `0x${string}` };
-            this.poolTokens.set(poolAddress, tokens);
-          }
+          if (tokens === undefined) { const [token0, token1] = await Promise.all([this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token0' }), this.client.readContract({ address: log.address, abi: TOKEN_ABI, functionName: 'token1' })]); tokens = { token0: token0 as `0x${string}`, token1: token1 as `0x${string}` }; this.poolTokens.set(poolAddress, tokens); }
           const token0IsQuote = isQuote(tokens.token0); const token1IsQuote = isQuote(tokens.token1); if (token0IsQuote === token1IsQuote) continue;
           const targetToken = token0IsQuote ? tokens.token1 : tokens.token0;
-          const decoded = decodeEventLog({ abi, topics: log.topics, data: log.data });
-          const args = decoded.args as Record<string, unknown>;
+          const decoded = decodeEventLog({ abi, topics: log.topics, data: log.data }); const args = decoded.args as Record<string, unknown>;
           const trader = typeof args.sender === 'string' && /^0x[0-9a-fA-F]{40}$/.test(args.sender) ? args.sender as `0x${string}` : undefined;
           const event: Parameters<typeof normalizeSwapEvent>[0] = { status: 'decoded', address: log.address, protocol, eventName: 'Swap', args, transactionHash: log.transactionHash, logIndex: Number(log.logIndex) };
           const normalized = normalizeSwapEvent(event, { address: log.address, token0: tokens.token0, token1: tokens.token1, targetToken });
