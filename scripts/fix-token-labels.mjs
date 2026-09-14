@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import './enable-v4-radar.mjs';
 
 const path = new URL('../src/index.ts', import.meta.url);
 let s = fs.readFileSync(path, 'utf8');
