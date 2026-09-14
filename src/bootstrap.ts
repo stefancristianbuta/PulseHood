@@ -24,10 +24,20 @@ const rpc = new RpcManager(config.rpcUrls, telemetry, config.maxRpcLatencyMs, co
 const activityLedger = new ActivityLedger();
 if (dashboard !== undefined) dashboard.activityLedger = activityLedger;
 
-const ERC20_SYMBOL = [{ type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] }] as const;
+const ERC20_METADATA = [
+  { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+  { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+] as const;
 const symbolCache = new Map<string, string>();
 const symbolRetryAt = new Map<string, number>();
 const SYMBOL_RETRY_MS = 30_000;
+
+const shortTokenAddress = (address: string) => address.length > 14 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address;
+const validTokenLabel = (value: unknown) => {
+  const clean = String(value ?? '').trim();
+  if (!clean || /^token(?:\s|$)/i.test(clean) || clean === 'TOKEN') return undefined;
+  return clean;
+};
 
 async function resolveCandidateSymbol(address: string, candidate: Record<string, unknown>): Promise<void> {
   const key = address.toLowerCase();
@@ -37,18 +47,25 @@ async function resolveCandidateSymbol(address: string, candidate: Record<string,
     return;
   }
   const retryAt = symbolRetryAt.get(key) ?? 0;
-  if (Date.now() < retryAt) return;
+  if (Date.now() < retryAt) {
+    candidate.token = shortTokenAddress(address);
+    return;
+  }
   symbolRetryAt.set(key, Date.now() + SYMBOL_RETRY_MS);
   try {
-    const symbol = await rpc.getClient().readContract({ address: address as `0x${string}`, abi: ERC20_SYMBOL, functionName: 'symbol' }) as string;
-    const clean = String(symbol ?? '').trim();
-    if (clean) {
-      symbolCache.set(key, clean);
-      symbolRetryAt.delete(key);
-      candidate.token = clean;
-    }
+    const client = rpc.getClient();
+    const [symbolResult, nameResult] = await Promise.allSettled([
+      client.readContract({ address: key as `0x${string}`, abi: ERC20_METADATA, functionName: 'symbol' }),
+      client.readContract({ address: key as `0x${string}`, abi: ERC20_METADATA, functionName: 'name' }),
+    ]);
+    const symbol = symbolResult.status === 'fulfilled' ? validTokenLabel(symbolResult.value) : undefined;
+    const name = nameResult.status === 'fulfilled' ? validTokenLabel(nameResult.value) : undefined;
+    const label = symbol ?? name ?? shortTokenAddress(address);
+    symbolCache.set(key, label);
+    symbolRetryAt.delete(key);
+    candidate.token = label;
   } catch {
-    // Deliberately keep the neutral TOKEN label. Never expose the contract as the coin name.
+    candidate.token = shortTokenAddress(address);
   }
 }
 
@@ -56,8 +73,7 @@ function updateCandidate(event: Parameters<TelemetryBus['emitEvent']>[0]): void 
   if (dashboard === undefined || event.token === undefined) return;
   const key = event.token.toLowerCase();
   const previous = dashboard.candidates.get(key) ?? {
-    // The map key is the canonical contract identity. The token field is display-only.
-    token: 'TOKEN',
+    token: shortTokenAddress(event.token),
     protocol: String(event.payload?.protocol ?? 'unknown'),
     pool: String(event.payload?.pool ?? 'unknown'),
     direction: String(event.payload?.direction ?? '—'),
