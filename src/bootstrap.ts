@@ -12,9 +12,9 @@ const radarPrototype = RadarIngest.prototype as unknown as {
 };
 const originalSeedPools = radarPrototype.seedPools;
 const originalPoll = radarPrototype.poll;
-let dashboardIngest: RadarIngest | undefined;
+let dashboardIngest: unknown;
 radarPrototype.seedPools = async function (...args: never[]): Promise<void> {
-  if (dashboardIngest === undefined) dashboardIngest = this as unknown as RadarIngest;
+  if (dashboardIngest === undefined) dashboardIngest = this;
   await originalSeedPools.apply(this, args);
 };
 radarPrototype.poll = async function (...args: never[]): Promise<unknown> {
