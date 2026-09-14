@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import './enable-v4-radar.mjs';
 
 const path = new URL('../src/index.ts', import.meta.url);
 let s = fs.readFileSync(path, 'utf8');
@@ -18,10 +19,7 @@ const old = `async function tokenSymbol(address:string):Promise<string>{\n  cons
 const replacement = `async function tokenSymbol(address:string):Promise<string>{\n  const key=address.toLowerCase();\n  const cached=symbolCache.get(key);\n  if(cached) return cached;\n  const retryAt=symbolRetryAt.get(key)??0;\n  if(Date.now()<retryAt) return fallbackTokenLabel(address);\n  symbolRetryAt.set(key,Date.now()+SYMBOL_RETRY_MS);\n  try{\n    const client=rpc.getClient();\n    const [symbolResult,nameResult]=await Promise.allSettled([\n      client.readContract({address:key as \`0x\${string}\`,abi:ERC20_SYMBOL,functionName:'symbol'}),\n      client.readContract({address:key as \`0x\${string}\`,abi:ERC20_SYMBOL,functionName:'name'})\n    ]);\n    const symbol=symbolResult.status==='fulfilled'?String(symbolResult.value??'').trim():'';\n    const name=nameResult.status==='fulfilled'?String(nameResult.value??'').trim():'';\n    if(symbol){symbolCache.set(key,symbol);if(name)nameCache.set(key,name);symbolRetryAt.delete(key);return symbol;}\n    if(name) nameCache.set(key,name);\n  }catch{}\n  return fallbackTokenLabel(address);\n}`;
 
 if(s.includes(old)) s=s.replace(old,replacement);
-
 s=s.replace("symbol:symbolCache.get(x.token.toLowerCase())??'TOKEN'", "symbol:symbolCache.get(x.token.toLowerCase())??fallbackTokenLabel(x.token),tokenName:nameCache.get(x.token.toLowerCase())??null");
 s=s.replace("symbol: s.symbol&&String(s.symbol)!==token.slice(0,8)?s.symbol:await tokenSymbol(token)", "symbol: s.symbol&&String(s.symbol)!==token.slice(0,8)&&String(s.symbol)!=='TOKEN'?s.symbol:await tokenSymbol(token)");
-s=s.replace("symbol:state.candidates.get(x.token.toLowerCase())?.protocol??'DEX'", "symbol:state.candidates.get(x.token.toLowerCase())?.protocol??'DEX'");
-
 fs.writeFileSync(path, s);
 console.log(JSON.stringify({event:'token_label_patch',tokenFallback:'contract-address',nameLookup:true,tokenPlaceholderRemoved:!s.includes("return 'TOKEN'"),source:'src/index.ts'}));
