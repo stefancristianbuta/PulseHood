@@ -4,24 +4,9 @@ import { RpcManager } from './rpc.js';
 import { TelemetryBus } from './telemetry.js';
 import { PaperTradingRuntime } from './trading-runtime.js';
 
-// index.ts owns the HTTP/dashboard radar instance. Keep that instance read-only for
-// swap polling and let the paper runtime be the single consumer of swap ranges.
-const radarPrototype = RadarIngest.prototype as unknown as {
-  seedPools: (...args: never[]) => Promise<void>;
-  poll: (...args: never[]) => Promise<unknown>;
-};
-const originalSeedPools = radarPrototype.seedPools;
-const originalPoll = radarPrototype.poll;
-let dashboardIngest: unknown;
-radarPrototype.seedPools = async function (...args: never[]): Promise<void> {
-  if (dashboardIngest === undefined) dashboardIngest = this;
-  await originalSeedPools.apply(this, args);
-};
-radarPrototype.poll = async function (...args: never[]): Promise<unknown> {
-  if (this === dashboardIngest) return undefined;
-  return originalPoll.apply(this, args);
-};
-
+// The dashboard no longer creates a RadarIngest instance. The old prototype guard
+// therefore disabled the runtime's own poll() by mistake. Keep one explicit ingest
+// owner here: PaperTradingRuntime.
 await import('./index.js');
 const dashboard = (globalThis as typeof globalThis & { __pulsehood?: {
   entriesEnabled: boolean;
@@ -85,7 +70,7 @@ async function start(): Promise<void> {
       const client = rpc.getClient();
       if (await client.getChainId() !== config.chainId) throw new Error('RPC chain mismatch');
       const ingest = new RadarIngest(client);
-      await (ingest as unknown as { seedPools: () => Promise<void> }).seedPools();
+      await ingest.seedPools();
       const runtime = new PaperTradingRuntime(client, telemetry, ingest);
       if (dashboard !== undefined) {
         dashboard.runtimeRunning = true;
@@ -99,7 +84,7 @@ async function start(): Promise<void> {
         dashboard.runtimeSellAll = () => { const closed = runtime.closeAll(); dashboard.entriesEnabled = false; return closed; };
       }
       runtime.start();
-      console.log(JSON.stringify({ event: 'paper_runtime_ready', chainId: config.chainId, mode: 'paper', poolsSeeded: true, dashboardRadarPollingDisabled: true }));
+      console.log(JSON.stringify({ event: 'paper_runtime_ready', chainId: config.chainId, mode: 'paper', ingestOwner: 'paper-runtime', dynamicSwapDiscovery: true }));
       return;
     } catch (error) {
       console.warn(JSON.stringify({ event: 'paper_runtime_waiting_for_rpc', message: error instanceof Error ? error.message : String(error) }));
