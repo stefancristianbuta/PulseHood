@@ -24,9 +24,38 @@ const rpc = new RpcManager(config.rpcUrls, telemetry, config.maxRpcLatencyMs, co
 const activityLedger = new ActivityLedger();
 if (dashboard !== undefined) dashboard.activityLedger = activityLedger;
 
+const ERC20_SYMBOL = [{ type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] }] as const;
+const symbolCache = new Map<string, string>();
+const symbolRetryAt = new Map<string, number>();
+const SYMBOL_RETRY_MS = 30_000;
+
+async function resolveCandidateSymbol(address: string, candidate: Record<string, unknown>): Promise<void> {
+  const key = address.toLowerCase();
+  const cached = symbolCache.get(key);
+  if (cached) {
+    candidate.token = cached;
+    return;
+  }
+  const retryAt = symbolRetryAt.get(key) ?? 0;
+  if (Date.now() < retryAt) return;
+  symbolRetryAt.set(key, Date.now() + SYMBOL_RETRY_MS);
+  try {
+    const symbol = await rpc.getClient().readContract({ address: address as `0x${string}`, abi: ERC20_SYMBOL, functionName: 'symbol' }) as string;
+    const clean = String(symbol ?? '').trim();
+    if (clean) {
+      symbolCache.set(key, clean);
+      symbolRetryAt.delete(key);
+      candidate.token = clean;
+    }
+  } catch {
+    // Keep the address out of the display name. A later candidate update retries the lookup.
+  }
+}
+
 function updateCandidate(event: Parameters<TelemetryBus['emitEvent']>[0]): void {
   if (dashboard === undefined || event.token === undefined) return;
-  const previous = dashboard.candidates.get(event.token.toLowerCase()) ?? {
+  const key = event.token.toLowerCase();
+  const previous = dashboard.candidates.get(key) ?? {
     token: event.token,
     protocol: String(event.payload?.protocol ?? 'unknown'),
     pool: String(event.payload?.pool ?? 'unknown'),
@@ -51,7 +80,8 @@ function updateCandidate(event: Parameters<TelemetryBus['emitEvent']>[0]): void 
     reason: event.event === 'paper_candidate_rejected' ? String(p.reason ?? 'rejected') : previous.reason,
     updatedAt: Date.now(),
   };
-  dashboard.candidates.set(event.token.toLowerCase(), next);
+  dashboard.candidates.set(key, next);
+  void resolveCandidateSymbol(event.token, next);
   while (dashboard.candidates.size > 100) {
     const oldest = [...dashboard.candidates.entries()].sort((a,b)=>Number(a[1].updatedAt)-Number(b[1].updatedAt))[0];
     if (oldest === undefined) break;
