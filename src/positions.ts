@@ -14,8 +14,8 @@ const ALLOWED: Record<PositionState, readonly PositionState[]> = {
 
 const ACTIVE_STATES = new Set<PositionState>(['ENTRY', 'OPEN', 'TRAILING', 'EXIT_SIGNAL']);
 const MOMENTUM_EXIT_CONFIRMATIONS = Math.max(2, Number(process.env.PAPER_EXIT_CONFIRMATIONS ?? 3));
-const DYNAMIC_LOCK_ACTIVATION_PCT = Math.max(1, Number(process.env.PAPER_LOCK_ACTIVATION_PCT ?? 8));
-const DYNAMIC_LOCK_GIVEBACK_PCT = Math.max(1, Number(process.env.PAPER_LOCK_GIVEBACK_PCT ?? 5));
+const DYNAMIC_LOCK_ACTIVATION_PCT = Math.max(1, Number(process.env.PAPER_LOCK_ACTIVATION_PCT ?? 3));
+const DYNAMIC_LOCK_GIVEBACK_PCT = Math.max(1, Number(process.env.PAPER_LOCK_GIVEBACK_PCT ?? 2));
 
 export class PositionManager {
   private readonly positions = new Map<string, Position>();
@@ -95,12 +95,6 @@ export class PositionManager {
         action: 'SELL',
         reason: `dynamic profit lock breached at ${lockGainPct.toFixed(2)}%`,
         trailingDistancePct: 0,
-      };
-    } else if (lockActive && decision.action === 'SELL') {
-      decision = {
-        action: 'HOLD',
-        reason: `dynamic profit lock protected ${lockGainPct.toFixed(2)}% floor`,
-        trailingDistancePct: decision.trailingDistancePct,
       };
     }
 
