@@ -14,6 +14,7 @@ const dashboard = (globalThis as typeof globalThis & { __pulsehood?: {
   runtimeStop?: () => void;
   runtimeResume?: () => void;
   runtimeSellAll?: () => unknown[];
+  runtimeListOpen?: () => Array<Record<string, unknown>>;
   latestBlock?: bigint;
   swapsReceived: number;
   candidates: Map<string, Record<string, unknown>>;
@@ -82,6 +83,7 @@ async function start(): Promise<void> {
           dashboard.entriesEnabled = true;
         };
         dashboard.runtimeSellAll = () => { const closed = runtime.closeAll(); dashboard.entriesEnabled = false; return closed; };
+        dashboard.runtimeListOpen = () => runtime.listOpen() as unknown as Array<Record<string, unknown>>;
       }
       runtime.start();
       console.log(JSON.stringify({ event: 'paper_runtime_ready', chainId: config.chainId, mode: 'paper', ingestOwner: 'paper-runtime', dynamicSwapDiscovery: true }));
