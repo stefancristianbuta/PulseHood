@@ -8,11 +8,11 @@ export interface EntryPolicyInput {
   buyPressurePct: number;
   volumeAcceleration: number;
   breakoutConfirmed: boolean;
-  priceChangePct: number;
-  microPriceChangePct: number;
-  buyCount: number;
-  uniqueBuyers: number;
-  largestBuyerVolumePct: number;
+  priceChangePct?: number;
+  microPriceChangePct?: number;
+  buyCount?: number;
+  uniqueBuyers?: number;
+  largestBuyerVolumePct?: number;
   minLiquidityUsd: number;
   minUniqueBuyerScore: number;
 }
@@ -39,11 +39,11 @@ export function qualifiesForEntry(input: EntryPolicyInput): boolean {
     input.uniqueBuyerScore >= Math.max(V2_ENTRY_DEFAULTS.minUniqueBuyerScore, input.minUniqueBuyerScore) &&
     input.buyPressurePct >= V2_ENTRY_DEFAULTS.minBuyPressurePct &&
     input.volumeAcceleration >= V2_ENTRY_DEFAULTS.minVolumeAccelerationPct &&
-    input.priceChangePct >= V2_ENTRY_DEFAULTS.minPriceChangePct &&
-    input.microPriceChangePct >= V2_ENTRY_DEFAULTS.minMicroPriceChangePct &&
-    input.buyCount >= V2_ENTRY_DEFAULTS.minBuyCount &&
-    input.uniqueBuyers >= V2_ENTRY_DEFAULTS.minUniqueBuyers &&
-    input.largestBuyerVolumePct <= V2_ENTRY_DEFAULTS.maxLargestBuyerVolumePct &&
+    (input.priceChangePct ?? 0) >= V2_ENTRY_DEFAULTS.minPriceChangePct &&
+    (input.microPriceChangePct ?? 0) >= V2_ENTRY_DEFAULTS.minMicroPriceChangePct &&
+    (input.buyCount ?? 0) >= V2_ENTRY_DEFAULTS.minBuyCount &&
+    (input.uniqueBuyers ?? 0) >= V2_ENTRY_DEFAULTS.minUniqueBuyers &&
+    (input.largestBuyerVolumePct ?? 100) <= V2_ENTRY_DEFAULTS.maxLargestBuyerVolumePct &&
     input.breakoutConfirmed
   );
 }
@@ -66,50 +66,14 @@ export const DEFAULT_EXIT_POLICY: ExitPolicyConfig = {
   earlyMomentumDrop: 8,
 };
 
-export function decideExit(
-  position: Position,
-  market: MarketUpdate,
-  config: ExitPolicyConfig = DEFAULT_EXIT_POLICY,
-): ExitDecision {
+export function decideExit(position: Position, market: MarketUpdate, config: ExitPolicyConfig = DEFAULT_EXIT_POLICY): ExitDecision {
   const momentumDrop = position.momentumPeak - market.momentum;
-  const retracementPct = position.peakPriceUsd > 0
-    ? ((position.peakPriceUsd - market.priceUsd) / position.peakPriceUsd) * 100
-    : 0;
-
-  if (momentumDrop >= config.sellMomentumDrop) {
-    return {
-      action: 'SELL',
-      reason: `momentum deterioration ${momentumDrop.toFixed(1)} points`,
-      trailingDistancePct: config.tightTrailingPct,
-    };
-  }
-
+  const retracementPct = position.peakPriceUsd > 0 ? ((position.peakPriceUsd - market.priceUsd) / position.peakPriceUsd) * 100 : 0;
+  if (momentumDrop >= config.sellMomentumDrop) return { action: 'SELL', reason: `momentum deterioration ${momentumDrop.toFixed(1)} points`, trailingDistancePct: config.tightTrailingPct };
   if (momentumDrop >= config.tightenMomentumDrop || market.volumeAcceleration <= config.maxVolumeDeterioration) {
-    if (retracementPct >= config.tightTrailingPct) {
-      return {
-        action: 'SELL',
-        reason: `tight trailing triggered after ${retracementPct.toFixed(1)}% retracement`,
-        trailingDistancePct: config.tightTrailingPct,
-      };
-    }
-    return {
-      action: 'TIGHTEN',
-      reason: 'momentum or volume deterioration detected',
-      trailingDistancePct: config.tightTrailingPct,
-    };
+    if (retracementPct >= config.tightTrailingPct) return { action: 'SELL', reason: `tight trailing triggered after ${retracementPct.toFixed(1)}% retracement`, trailingDistancePct: config.tightTrailingPct };
+    return { action: 'TIGHTEN', reason: 'momentum or volume deterioration detected', trailingDistancePct: config.tightTrailingPct };
   }
-
-  if (retracementPct >= config.baseTrailingPct) {
-    return {
-      action: 'SELL',
-      reason: `base trailing triggered after ${retracementPct.toFixed(1)}% retracement`,
-      trailingDistancePct: config.baseTrailingPct,
-    };
-  }
-
-  return {
-    action: 'HOLD',
-    reason: 'momentum remains constructive',
-    trailingDistancePct: config.baseTrailingPct,
-  };
+  if (retracementPct >= config.baseTrailingPct) return { action: 'SELL', reason: `base trailing triggered after ${retracementPct.toFixed(1)}% retracement`, trailingDistancePct: config.baseTrailingPct };
+  return { action: 'HOLD', reason: 'momentum remains constructive', trailingDistancePct: config.baseTrailingPct };
 }
