@@ -2,12 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CHAIN, loadConfig } from './config.js';
 
-test('defaults to paper mode and Robinhood Chain endpoints', () => {
+test('defaults to paper mode and redundant Robinhood Chain RPC endpoints', () => {
   const config = loadConfig({});
   assert.equal(config.chainId, 4663);
   assert.equal(config.tradingMode, 'paper');
   assert.equal(config.liveEnabled, false);
-  assert.deepEqual(config.rpcUrls, ['https://rpc.mainnet.chain.robinhood.com']);
+  assert.deepEqual(config.rpcUrls, [
+    'https://rpc.mainnet.chain.robinhood.com',
+    'https://rpc-robinhood.blockmachine.io',
+    'https://robinhood-mainnet-rpc.blockreq.com/v1/rpc/public',
+  ]);
   assert.deepEqual(config.wsUrls, ['wss://feed.mainnet.chain.robinhood.com']);
 });
 
