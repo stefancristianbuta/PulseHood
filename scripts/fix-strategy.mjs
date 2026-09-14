@@ -1,16 +1,16 @@
 import fs from 'node:fs';
 
 const path = 'src/trading-runtime.ts';
+const MIN_NET_EDGE_USD = Math.max(0, Number(process.env.PAPER_MIN_NET_EDGE_USD ?? 1.5));
+const ROUND_TRIP_COST_BUFFER = Math.max(1, Number(process.env.PAPER_ROUND_TRIP_COST_BUFFER ?? 1.15));
+const MIN_HOLD_MS = Math.max(0, Number(process.env.PAPER_MIN_HOLD_MS ?? 60_000));
+const MAX_HOLD_MS = Math.max(MIN_HOLD_MS, Number(process.env.PAPER_MAX_HOLD_MS ?? 15 * 60_000));
+const HARD_STOP_PCT = Math.max(0.5, Number(process.env.PAPER_HARD_STOP_PCT ?? 2.5));
 let s = fs.readFileSync(path, 'utf8');
 
 const anchor = "const MARKET_CACHE_TTL_MS = 750;";
 if (!s.includes(anchor)) throw new Error('strategy anchor not found');
 s = s.replace(anchor, `${anchor}\nconst MIN_NET_EDGE_USD = Math.max(0, Number(process.env.PAPER_MIN_NET_EDGE_USD ?? 1.5));\nconst ROUND_TRIP_COST_BUFFER = Math.max(1, Number(process.env.PAPER_ROUND_TRIP_COST_BUFFER ?? 1.15));\nconst MIN_HOLD_MS = Math.max(0, Number(process.env.PAPER_MIN_HOLD_MS ?? 60_000));\nconst MAX_HOLD_MS = Math.max(MIN_HOLD_MS, Number(process.env.PAPER_MAX_HOLD_MS ?? 15 * 60_000));\nconst HARD_STOP_PCT = Math.max(0.5, Number(process.env.PAPER_HARD_STOP_PCT ?? 2.5));`);
-
-s = s.replace(
-  "interface PositionMarket { protocol: string; pool: Addr; quote: Addr; }",
-  "interface PositionMarket { protocol: string; pool: Addr; quote: Addr; entryCostUsd: number; }",
-);
 
 const oldQuoteGate = "const best = chooseBestQuote([this.makePaperQuote(swap.targetToken, market.priceUsd, market.liquidityUsd, this.entrySizeUsd)]);\n    if (best === undefined) { this.reject(swap, 'no_executable_quote'); return; }";
 const newQuoteGate = `const best = chooseBestQuote([this.makePaperQuote(swap.targetToken, market.priceUsd, market.liquidityUsd, this.entrySizeUsd)]);\n    if (best === undefined) { this.reject(swap, 'no_executable_quote'); return; }\n    const entryCostUsd = best.quote.dexFeeUsd + best.quote.slippageUsd + best.quote.priceImpactUsd + (Number(best.quote.gasEstimate * best.quote.gasPriceWei) / 1e18) * best.quote.nativeTokenUsd;\n    const estimatedExitAmountUsd = Math.max(0, this.entrySizeUsd - entryCostUsd);\n    const estimatedExit = this.makePaperQuote(swap.targetToken, market.priceUsd, market.liquidityUsd, estimatedExitAmountUsd, estimatedExitAmountUsd);\n    const estimatedRoundTripCostUsd = entryCostUsd + estimatedExit.dexFeeUsd + estimatedExit.slippageUsd + estimatedExit.priceImpactUsd + (Number(estimatedExit.gasEstimate * estimatedExit.gasPriceWei) / 1e18) * estimatedExit.nativeTokenUsd;\n    const requiredMovePct = ((estimatedRoundTripCostUsd * ROUND_TRIP_COST_BUFFER + MIN_NET_EDGE_USD) / Math.max(this.entrySizeUsd, 1)) * 100;\n    if (flow.priceChangePct < requiredMovePct) { this.reject(swap, 'edge_below_round_trip_cost', { priceChangePct: flow.priceChangePct, requiredMovePct, estimatedRoundTripCostUsd, entryCostUsd, minNetEdgeUsd: MIN_NET_EDGE_USD }); return; }`;
@@ -35,11 +35,6 @@ s = s.replace(
 s = s.replace(
   "const netPnlUsd = exitValueUsd - position.sizeUsd;",
   "const netPnlUsd = exitValueUsd - position.sizeUsd - entryCostUsd;",
-);
-
-s = s.replace(
-  "this.positionMarkets.delete(position.id);\n      this.telemetry.emitEvent({ correlationId: exitCorrelationId",
-  "this.positionMarkets.delete(position.id);\n      this.telemetry.emitEvent({ correlationId: exitCorrelationId",
 );
 
 s = s.replace(
