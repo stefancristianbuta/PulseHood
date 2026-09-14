@@ -60,7 +60,7 @@ async function resolveCandidateSymbol(address: string, candidate: Record<string,
     ]);
     const symbol = symbolResult.status === 'fulfilled' ? validTokenLabel(symbolResult.value) : undefined;
     const name = nameResult.status === 'fulfilled' ? validTokenLabel(nameResult.value) : undefined;
-    const label = symbol ?? name ?? shortTokenAddress(address);
+    const label = name ?? symbol ?? shortTokenAddress(address);
     symbolCache.set(key, label);
     symbolRetryAt.delete(key);
     candidate.token = label;
