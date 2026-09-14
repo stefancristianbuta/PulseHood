@@ -174,7 +174,7 @@ export class PaperTradingRuntime {
       const pnlPct = update.position.entryPriceUsd > 0 ? ((update.position.currentPriceUsd / update.position.entryPriceUsd) - 1) * 100 : 0;
       this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('MARK'), module: 'positions', event: 'paper_position_mark', token: position.token, status: 'ok', payload: { positionId: position.id, currentPriceUsd: update.position.currentPriceUsd, pnlUsd, pnlPct, state: update.position.state, momentum, momentumPeak: update.position.momentumPeak, volumeAcceleration: flow?.volumeAccelerationPct ?? 0, exitAction: update.decision.action, exitReason: update.decision.reason } });
       if (update.decision.action !== 'SELL') continue;
-      const best = chooseBestQuote([this.makePaperQuote(position.token, market.priceUsd, market.liquidityUsd, position.sizeUsd)]);
+      const best = chooseBestQuote([this.makePaperQuote(position.token, market.priceUsd, market.liquidityUsd, position.sizeUsd, pnlUsd + position.sizeUsd)]);
       if (best === undefined) { console.warn(JSON.stringify({ event: 'paper_exit_waiting_for_quote', positionId: position.id, reason: 'no_executable_quote' })); continue; }
       const exitCorrelationId = TelemetryBus.correlationId('EXIT');
       const sell = await this.execution.sell({ side: 'SELL', token: position.token, amountUsd: position.sizeUsd, quote: best.quote, correlationId: exitCorrelationId });
@@ -188,11 +188,11 @@ export class PaperTradingRuntime {
     }
   }
 
-  private makePaperQuote(token: Addr, priceUsd: number, liquidityUsd: number, amountUsd: number): ExecutionQuote {
+  private makePaperQuote(token: Addr, priceUsd: number, liquidityUsd: number, amountUsd: number, expectedAmountOutUsd = amountUsd): ExecutionQuote {
     const fee = amountUsd * (PAPER_DEX_FEE_PCT / 100);
     const impact = amountUsd * Math.min(0.03, amountUsd / Math.max(liquidityUsd, 1));
     const slippage = amountUsd * (PAPER_SLIPPAGE_PCT / 100);
-    return { dexId: 'paper-router', token, amountInUsd: amountUsd, expectedAmountOutUsd: amountUsd, executablePriceUsd: priceUsd, dexFeeUsd: fee, slippageUsd: slippage, priceImpactUsd: impact, gasEstimate: PAPER_GAS_LIMIT, gasPriceWei: PAPER_GAS_PRICE_GWEI, nativeTokenUsd: PAPER_ETH_USD, quotedAt: Date.now(), latencyMs: 25 };
+    return { dexId: 'paper-router', token, amountInUsd: amountUsd, expectedAmountOutUsd, executablePriceUsd: priceUsd, dexFeeUsd: fee, slippageUsd: slippage, priceImpactUsd: impact, gasEstimate: PAPER_GAS_LIMIT, gasPriceWei: PAPER_GAS_PRICE_GWEI, nativeTokenUsd: PAPER_ETH_USD, quotedAt: Date.now(), latencyMs: 25 };
   }
 
   private quoteToUsd(token: Addr | undefined, amount: bigint): number {
