@@ -34,6 +34,7 @@ interface WindowState {
   sellCount: number;
   buyers: Set<string>;
   sellers: Set<string>;
+  firstPriceUsd: number | undefined;
   lastPriceUsd: number | undefined;
   previousVolumeUsd: number | undefined;
   previousUniqueBuyers: number | undefined;
@@ -76,6 +77,7 @@ export class FlowEngine {
         sellCount: 0,
         buyers: new Set(),
         sellers: new Set(),
+        firstPriceUsd: input.priceUsd,
         lastPriceUsd: undefined,
         previousVolumeUsd: state?.buyVolumeUsd !== undefined ? state.buyVolumeUsd + state.sellVolumeUsd : undefined,
         previousUniqueBuyers: state?.buyers.size,
@@ -84,6 +86,7 @@ export class FlowEngine {
     }
 
     const previousPriceUsd = state.lastPriceUsd;
+    state.firstPriceUsd ??= input.priceUsd;
     state.lastPriceUsd = input.priceUsd;
 
     if (input.swap.direction === 'BUY') {
@@ -100,7 +103,7 @@ export class FlowEngine {
     const buyPressurePct = volumeUsd > 0 ? (state.buyVolumeUsd / volumeUsd) * 100 : 0;
     const uniqueBuyerDeltaPct = pctChange(state.buyers.size, state.previousUniqueBuyers);
     const volumeAccelerationPct = pctChange(volumeUsd, state.previousVolumeUsd);
-    const priceChangePct = previousPriceUsd === undefined ? 0 : pctChange(input.priceUsd, previousPriceUsd);
+    const priceChangePct = pctChange(input.priceUsd, state.firstPriceUsd);
 
     return {
       token,
