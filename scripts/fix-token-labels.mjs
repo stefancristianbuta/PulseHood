@@ -20,5 +20,7 @@ const replacement = `async function tokenSymbol(address:string):Promise<string>{
 if(s.includes(old)) s=s.replace(old,replacement);
 s=s.replace("symbol:symbolCache.get(x.token.toLowerCase())??'TOKEN'", "symbol:nameCache.get(x.token.toLowerCase())??symbolCache.get(x.token.toLowerCase())??fallbackTokenLabel(x.token),tokenName:nameCache.get(x.token.toLowerCase())??null");
 s=s.replace("symbol: s.symbol&&String(s.symbol)!==token.slice(0,8)?s.symbol:await tokenSymbol(token)", "symbol: s.symbol&&String(s.symbol)!==token.slice(0,8)&&String(s.symbol)!=='TOKEN'?s.symbol:await tokenSymbol(token)");
+s=s.replace(".r{display:grid;grid-template-columns:1.55fr .85fr .7fr .8fr .8fr .75fr .8fr .85fr;gap:8px;align-items:center;", ".r{display:grid;grid-template-columns:1.55fr .85fr .7fr .8fr .8fr .75fr .8fr .85fr;gap:8px;align-items:center;min-width:0;");
+s=s.replace(".table .r{min-width:900px}", ".table .r{min-width:900px}.r>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.r>span>b{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}");
 fs.writeFileSync(path, s);
-console.log(JSON.stringify({event:'token_label_patch',tokenFallback:'contract-address',nameLookup:true,namePreferred:true,tokenPlaceholderRemoved:!s.includes("return 'TOKEN'"),source:'src/index.ts'}));
+console.log(JSON.stringify({event:'token_label_patch',tokenFallback:'contract-address',nameLookup:true,namePreferred:true,overlapGuard:true,tokenPlaceholderRemoved:!s.includes("return 'TOKEN'"),source:'src/index.ts'}));
