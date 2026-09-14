@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+const path = new URL('../src/trading-runtime.ts', import.meta.url);
+let s = fs.readFileSync(path, 'utf8');
+s = s.replace("poolId?: Addr | `0x${string}`, token0?: Addr, token1?: Addr", "poolId?: string, token0?: string, token1?: string");
+s = s.replace("poolId?: `0x${string}`, token0?: Addr, token1?: Addr", "poolId?: string, token0?: string, token1?: string");
+s = s.replace("readV4Market(target: Addr, quote: Addr | undefined, poolId?: `0x${string}`, token0?: Addr, token1?: Addr)", "readV4Market(target: Addr, quote: Addr | undefined, poolId?: string, token0?: string, token1?: string)");
+s = s.replace("args: [poolId]", "args: [poolId as `0x${string}`]");
+s = s.replace("token0.toLowerCase() === target.toLowerCase()", "token0.toLowerCase() === target.toLowerCase()");
+fs.writeFileSync(path, s);
+console.log(JSON.stringify({event:'v4_type_patch',addressTypes:'normalized'}));
