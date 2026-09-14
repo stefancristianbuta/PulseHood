@@ -8,11 +8,6 @@ export interface EntryPolicyInput {
   buyPressurePct: number;
   volumeAcceleration: number;
   breakoutConfirmed: boolean;
-  priceChangePct?: number;
-  microPriceChangePct?: number;
-  buyCount?: number;
-  uniqueBuyers?: number;
-  largestBuyerVolumePct?: number;
   minLiquidityUsd: number;
   minUniqueBuyerScore: number;
 }
@@ -24,28 +19,16 @@ export const V2_ENTRY_DEFAULTS = {
   minUniqueBuyerScore: 40,
   minBuyPressurePct: 68,
   minVolumeAccelerationPct: 10,
-  minPriceChangePct: 0.8,
-  minMicroPriceChangePct: 0.25,
-  minBuyCount: 4,
-  minUniqueBuyers: 4,
-  maxLargestBuyerVolumePct: 45,
 };
 
 export function qualifiesForEntry(input: EntryPolicyInput): boolean {
-  return (
-    input.momentum.score >= V2_ENTRY_DEFAULTS.minMomentum &&
+  return input.momentum.score >= V2_ENTRY_DEFAULTS.minMomentum &&
     input.riskScore <= V2_ENTRY_DEFAULTS.maxRisk &&
     input.liquidityUsd >= Math.max(V2_ENTRY_DEFAULTS.minLiquidityUsd, input.minLiquidityUsd) &&
     input.uniqueBuyerScore >= Math.max(V2_ENTRY_DEFAULTS.minUniqueBuyerScore, input.minUniqueBuyerScore) &&
     input.buyPressurePct >= V2_ENTRY_DEFAULTS.minBuyPressurePct &&
     input.volumeAcceleration >= V2_ENTRY_DEFAULTS.minVolumeAccelerationPct &&
-    (input.priceChangePct ?? 0) >= V2_ENTRY_DEFAULTS.minPriceChangePct &&
-    (input.microPriceChangePct ?? 0) >= V2_ENTRY_DEFAULTS.minMicroPriceChangePct &&
-    (input.buyCount ?? 0) >= V2_ENTRY_DEFAULTS.minBuyCount &&
-    (input.uniqueBuyers ?? 0) >= V2_ENTRY_DEFAULTS.minUniqueBuyers &&
-    (input.largestBuyerVolumePct ?? 100) <= V2_ENTRY_DEFAULTS.maxLargestBuyerVolumePct &&
-    input.breakoutConfirmed
-  );
+    input.breakoutConfirmed;
 }
 
 export interface ExitPolicyConfig {
