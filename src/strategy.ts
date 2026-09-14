@@ -14,12 +14,12 @@ export interface EntryPolicyInput {
 
 export function qualifiesForEntry(input: EntryPolicyInput): boolean {
   return (
-    input.momentum.score >= 80 &&
-    input.riskScore <= 30 &&
+    input.momentum.score >= 82 &&
+    input.riskScore <= 25 &&
     input.liquidityUsd >= input.minLiquidityUsd &&
-    input.uniqueBuyerScore >= input.minUniqueBuyerScore &&
-    input.buyPressurePct >= 62 &&
-    input.volumeAcceleration > 0 &&
+    input.uniqueBuyerScore >= Math.max(30, input.minUniqueBuyerScore) &&
+    input.buyPressurePct >= 65 &&
+    input.volumeAcceleration > 5 &&
     input.breakoutConfirmed
   );
 }
@@ -33,11 +33,11 @@ export interface ExitPolicyConfig {
 }
 
 export const DEFAULT_EXIT_POLICY: ExitPolicyConfig = {
-  tightenMomentumDrop: 15,
-  sellMomentumDrop: 30,
-  baseTrailingPct: 8,
-  tightTrailingPct: 4,
-  maxVolumeDeterioration: -20,
+  tightenMomentumDrop: 10,
+  sellMomentumDrop: 20,
+  baseTrailingPct: 6,
+  tightTrailingPct: 3,
+  maxVolumeDeterioration: -10,
 };
 
 export function decideExit(
