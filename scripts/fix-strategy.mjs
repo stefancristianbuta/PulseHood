@@ -2,16 +2,16 @@ import fs from 'node:fs';
 
 const path = 'src/trading-runtime.ts';
 const MIN_NET_EDGE_USD = Math.max(0, Number(process.env.PAPER_MIN_NET_EDGE_USD ?? 1.5));
-const ROUND_TRIP_COST_BUFFER = Math.max(1, Number(process.env.PAPER_ROUND_TRIP_COST_BUFFER ?? 1.15));
-const MIN_HOLD_MS = Math.max(0, Number(process.env.PAPER_MIN_HOLD_MS ?? 60_000));
-const MAX_HOLD_MS = Math.max(MIN_HOLD_MS, Number(process.env.PAPER_MAX_HOLD_MS ?? 15 * 60_000));
-const HARD_STOP_PCT = Math.max(0.5, Number(process.env.PAPER_HARD_STOP_PCT ?? 2.5));
+const ROUND_TRIP_COST_BUFFER = Math.max(1, Number(process.env.PAPER_ROUND_TRIP_COST_BUFFER ?? 1.25));
+const MIN_HOLD_MS = Math.max(0, Number(process.env.PAPER_MIN_HOLD_MS ?? 20_000));
+const MAX_HOLD_MS = Math.max(MIN_HOLD_MS, Number(process.env.PAPER_MAX_HOLD_MS ?? 5 * 60_000));
+const HARD_STOP_PCT = Math.max(0.5, Number(process.env.PAPER_HARD_STOP_PCT ?? 1.5));
 let s = fs.readFileSync(path, 'utf8');
 
 const anchor = 'const MARKET_CACHE_TTL_MS = 750;';
 if (!s.includes(anchor)) throw new Error('strategy anchor not found');
 
-const constants = `const MIN_NET_EDGE_USD = Math.max(0, Number(process.env.PAPER_MIN_NET_EDGE_USD ?? 1.5));\nconst ROUND_TRIP_COST_BUFFER = Math.max(1, Number(process.env.PAPER_ROUND_TRIP_COST_BUFFER ?? 1.15));\nconst MIN_HOLD_MS = Math.max(0, Number(process.env.PAPER_MIN_HOLD_MS ?? 60_000));\nconst MAX_HOLD_MS = Math.max(MIN_HOLD_MS, Number(process.env.PAPER_MAX_HOLD_MS ?? 15 * 60_000));\nconst HARD_STOP_PCT = Math.max(0.5, Number(process.env.PAPER_HARD_STOP_PCT ?? 2.5));`;
+const constants = `const MIN_NET_EDGE_USD = Math.max(0, Number(process.env.PAPER_MIN_NET_EDGE_USD ?? 1.5));\nconst ROUND_TRIP_COST_BUFFER = Math.max(1, Number(process.env.PAPER_ROUND_TRIP_COST_BUFFER ?? 1.25));\nconst MIN_HOLD_MS = Math.max(0, Number(process.env.PAPER_MIN_HOLD_MS ?? 20_000));\nconst MAX_HOLD_MS = Math.max(MIN_HOLD_MS, Number(process.env.PAPER_MAX_HOLD_MS ?? 5 * 60_000));\nconst HARD_STOP_PCT = Math.max(0.5, Number(process.env.PAPER_HARD_STOP_PCT ?? 1.5));`;
 if (!s.includes('const MIN_NET_EDGE_USD =')) s = s.replace(anchor, `${anchor}\n${constants}`);
 
 s = s.replace(/interface PositionMarket \{[^\n]*\}/, 'interface PositionMarket { protocol: string; pool: Addr; quote: Addr; entryCostUsd: number; }');
@@ -30,7 +30,7 @@ s = s.replace(
 );
 
 const oldMark = "const pnlUsd = update.position.entryPriceUsd > 0 ? update.position.sizeUsd * ((update.position.currentPriceUsd / update.position.entryPriceUsd) - 1) : 0;\n      const pnlPct = update.position.entryPriceUsd > 0 ? ((update.position.currentPriceUsd / update.position.entryPriceUsd) - 1) * 100 : 0;";
-const newMark = `const pnlUsd = update.position.entryPriceUsd > 0 ? update.position.sizeUsd * ((update.position.currentPriceUsd / update.position.entryPriceUsd) - 1) : 0;\n      const pnlPct = update.position.entryPriceUsd > 0 ? ((update.position.currentPriceUsd / update.position.entryPriceUsd) - 1) * 100 : 0;\n      const ageMs = Math.max(0, Date.now() - update.position.openedAt);\n      const entryCostUsd = marketRef.entryCostUsd;\n      const exitProbe = this.makePaperQuote(position.token, market.priceUsd, market.liquidityUsd, update.position.sizeUsd, Math.max(0, update.position.sizeUsd + pnlUsd));\n      const estimatedExitCostUsd = exitProbe.dexFeeUsd + exitProbe.slippageUsd + exitProbe.priceImpactUsd + (Number(exitProbe.gasEstimate * exitProbe.gasPriceWei) / 1e18) * exitProbe.nativeTokenUsd;\n      const estimatedNetPnlUsd = pnlUsd - entryCostUsd - estimatedExitCostUsd;\n      const takeProfitReady = estimatedNetPnlUsd >= MIN_NET_EDGE_USD;\n      const hardStop = pnlPct <= -HARD_STOP_PCT;\n      const maxHold = ageMs >= MAX_HOLD_MS;\n      const deteriorationExit = update.decision.action === 'SELL' && ageMs >= MIN_HOLD_MS && (estimatedNetPnlUsd >= 0 || hardStop || maxHold);`;
+const newMark = `const pnlUsd = update.position.entryPriceUsd > 0 ? update.position.sizeUsd * ((update.position.currentPriceUsd / update.position.entryPriceUsd) - 1) : 0;\n      const pnlPct = update.position.entryPriceUsd > 0 ? ((update.position.currentPriceUsd / update.position.entryPriceUsd) - 1) * 100 : 0;\n      const ageMs = Math.max(0, Date.now() - update.position.openedAt);\n      const entryCostUsd = marketRef.entryCostUsd;\n      const exitProbe = this.makePaperQuote(position.token, market.priceUsd, market.liquidityUsd, update.position.sizeUsd, Math.max(0, update.position.sizeUsd + pnlUsd));\n      const estimatedExitCostUsd = exitProbe.dexFeeUsd + exitProbe.slippageUsd + exitProbe.priceImpactUsd + (Number(exitProbe.gasEstimate * exitProbe.gasPriceWei) / 1e18) * exitProbe.nativeTokenUsd;\n      const estimatedNetPnlUsd = pnlUsd - entryCostUsd - estimatedExitCostUsd;\n      const deterioration = update.decision.action === 'TIGHTEN' || update.decision.action === 'SELL';\n      const takeProfitReady = estimatedNetPnlUsd >= MIN_NET_EDGE_USD && ageMs >= MIN_HOLD_MS && deterioration;\n      const hardStop = pnlPct <= -HARD_STOP_PCT;\n      const maxHold = ageMs >= MAX_HOLD_MS;\n      const lockExit = update.decision.reason.startsWith('dynamic profit lock breached');\n      const deteriorationExit = update.decision.action === 'SELL' && ageMs >= MIN_HOLD_MS && (estimatedNetPnlUsd >= 0 || hardStop || maxHold);`;
 if (!s.includes('const takeProfitReady =')) {
   if (!s.includes(oldMark)) throw new Error('mark block not found');
   s = s.replace(oldMark, newMark);
@@ -38,7 +38,7 @@ if (!s.includes('const takeProfitReady =')) {
 
 s = s.replace(
   "if (update.decision.action !== 'SELL') continue;",
-  "if (!takeProfitReady && !hardStop && !maxHold && !deteriorationExit) continue;",
+  "if (!takeProfitReady && !hardStop && !maxHold && !deteriorationExit && !lockExit) continue;",
 );
 
 s = s.replace(
@@ -48,12 +48,12 @@ s = s.replace(
 
 s = s.replace(
   "payload: { positionId: position.id, currentPriceUsd: update.position.currentPriceUsd, pnlUsd, pnlPct, state: update.position.state, momentum, momentumPeak: update.position.momentumPeak, volumeAcceleration: flow?.volumeAccelerationPct ?? 0, exitAction: update.decision.action, exitReason: update.decision.reason }",
-  "payload: { positionId: position.id, currentPriceUsd: update.position.currentPriceUsd, pnlUsd, pnlPct, state: update.position.state, momentum, momentumPeak: update.position.momentumPeak, volumeAcceleration: flow?.volumeAccelerationPct ?? 0, exitAction: update.decision.action, exitReason: update.decision.reason, ageMs, entryCostUsd, estimatedExitCostUsd, estimatedNetPnlUsd, takeProfitReady, hardStop, maxHold }",
+  "payload: { positionId: position.id, currentPriceUsd: update.position.currentPriceUsd, pnlUsd, pnlPct, state: update.position.state, momentum, momentumPeak: update.position.momentumPeak, volumeAcceleration: flow?.volumeAccelerationPct ?? 0, exitAction: update.decision.action, exitReason: update.decision.reason, ageMs, entryCostUsd, estimatedExitCostUsd, estimatedNetPnlUsd, takeProfitReady, hardStop, maxHold, lockExit }",
 );
 
 s = s.replace(
   "console.log(JSON.stringify({ event: 'paper_exit', positionId: position.id, priceUsd: market.priceUsd, pnlUsd: netPnlUsd, pnlPct: netPnlPct, grossPnlUsd: pnlUsd, exitCostUsd: sell.fill.cost.totalUsd, reason: update.decision.reason }));",
-  "console.log(JSON.stringify({ event: 'paper_exit', positionId: position.id, priceUsd: market.priceUsd, pnlUsd: netPnlUsd, pnlPct: netPnlPct, grossPnlUsd: pnlUsd, entryCostUsd, exitCostUsd: sell.fill.cost.totalUsd, reason: takeProfitReady ? 'take_profit' : hardStop ? 'hard_stop' : maxHold ? 'max_hold' : update.decision.reason }));",
+  "console.log(JSON.stringify({ event: 'paper_exit', positionId: position.id, priceUsd: market.priceUsd, pnlUsd: netPnlUsd, pnlPct: netPnlPct, grossPnlUsd: pnlUsd, entryCostUsd, exitCostUsd: sell.fill.cost.totalUsd, reason: takeProfitReady ? 'take_profit' : hardStop ? 'hard_stop' : maxHold ? 'max_hold' : lockExit ? 'profit_lock' : update.decision.reason }));",
 );
 
 fs.writeFileSync(path, s);
