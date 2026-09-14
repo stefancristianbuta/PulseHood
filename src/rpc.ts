@@ -1,5 +1,6 @@
 import {
   createPublicClient,
+  fallback,
   http,
   type PublicClient,
   type Transport,
@@ -18,6 +19,7 @@ interface RpcEndpoint {
 
 export class RpcManager {
   private readonly endpoints: RpcEndpoint[];
+  private readonly resilientClient: PublicClient<Transport>;
 
   constructor(
     urls: string[],
@@ -25,15 +27,22 @@ export class RpcManager {
     private readonly maxLatencyMs = 750,
     private readonly maxBlockLag = 3,
   ) {
-    const normalizedUrls = urls.map((url) => url.trim()).filter(Boolean);
+    const normalizedUrls = [...new Set(urls.map((url) => url.trim()).filter(Boolean))];
     if (normalizedUrls.length === 0) throw new Error('At least one RPC endpoint is required');
     this.endpoints = normalizedUrls.map((url) => ({
       url,
-      client: createPublicClient({ chain: CHAIN, transport: http(url) }) as PublicClient<Transport>,
+      client: createPublicClient({ chain: CHAIN, transport: http(url, { retryCount: 1, timeout: 4_000 }) }) as PublicClient<Transport>,
       latencyMs: Number.POSITIVE_INFINITY,
       failures: 0,
       healthy: false,
     }));
+    this.resilientClient = createPublicClient({
+      chain: CHAIN,
+      transport: fallback(
+        normalizedUrls.map((url) => http(url, { retryCount: 1, timeout: 4_000 })),
+        { rank: true, retryCount: 1 },
+      ),
+    }) as PublicClient<Transport>;
   }
 
   async probe(): Promise<void> {
@@ -46,11 +55,8 @@ export class RpcManager {
         endpoint.failures = 0;
         endpoint.healthy = endpoint.latencyMs <= this.maxLatencyMs;
         this.telemetry.emitEvent({
-          correlationId: TelemetryBus.correlationId('RPC'),
-          module: 'rpc',
-          event: 'probe',
-          latencyMs: endpoint.latencyMs,
-          status: endpoint.healthy ? 'ok' : 'warning',
+          correlationId: TelemetryBus.correlationId('RPC'), module: 'rpc', event: 'probe',
+          latencyMs: endpoint.latencyMs, status: endpoint.healthy ? 'ok' : 'warning',
           payload: { url: endpoint.url, blockNumber: blockNumber.toString() },
         });
         return blockNumber;
@@ -58,10 +64,7 @@ export class RpcManager {
         endpoint.failures += 1;
         endpoint.healthy = false;
         this.telemetry.emitEvent({
-          correlationId: TelemetryBus.correlationId('RPC'),
-          module: 'rpc',
-          event: 'probe_failed',
-          status: 'error',
+          correlationId: TelemetryBus.correlationId('RPC'), module: 'rpc', event: 'probe_failed', status: 'error',
           payload: { url: endpoint.url, error: error instanceof Error ? error.message : String(error) },
         });
         return undefined;
@@ -71,44 +74,21 @@ export class RpcManager {
     const liveBlocks = results.filter((value): value is bigint => value !== undefined);
     if (liveBlocks.length === 0) throw new Error('All RPC endpoints are unavailable');
     const head = liveBlocks.reduce((max, value) => (value > max ? value : max));
-
     for (const endpoint of this.endpoints) {
-      if (endpoint.blockNumber !== undefined) {
-        endpoint.healthy = endpoint.healthy && head - endpoint.blockNumber <= BigInt(this.maxBlockLag);
-      }
+      if (endpoint.blockNumber !== undefined) endpoint.healthy = endpoint.healthy && head - endpoint.blockNumber <= BigInt(this.maxBlockLag);
     }
   }
 
   getClient(): PublicClient<Transport> {
-    const healthy = [...this.endpoints]
-      .filter((endpoint) => endpoint.healthy)
-      .sort((a, b) => a.latencyMs - b.latencyMs);
-    const bestHealthy = healthy[0];
-    if (bestHealthy !== undefined) return bestHealthy.client;
-
-    // Public RPCs can be temporarily slower than the latency policy while still
-    // serving a current chain head. Prefer a live/degraded endpoint over treating
-    // the whole radar as offline; latency remains visible in telemetry/status.
-    const degraded = [...this.endpoints]
-      .filter((endpoint) => endpoint.blockNumber !== undefined && endpoint.failures === 0)
-      .sort((a, b) => a.latencyMs - b.latencyMs);
-    const bestDegraded = degraded[0];
-    if (bestDegraded !== undefined) return bestDegraded.client;
-
-    throw new Error('No live RPC endpoint available');
+    // The fallback transport retries each scanner request across providers. This is
+    // deliberately different from returning one endpoint selected by the last probe:
+    // a provider can pass a head probe and then immediately rate-limit eth_getLogs.
+    return this.resilientClient;
   }
 
   getStatus() {
-    return this.endpoints.map(({ url, latencyMs, blockNumber, failures, healthy }) => ({
-      url,
-      latencyMs,
-      blockNumber,
-      failures,
-      healthy,
-    }));
+    return this.endpoints.map(({ url, latencyMs, blockNumber, failures, healthy }) => ({ url, latencyMs, blockNumber, failures, healthy }));
   }
 
-  get chainId(): number {
-    return CHAIN.id;
-  }
+  get chainId(): number { return CHAIN.id; }
 }
