@@ -58,3 +58,24 @@ test('requires repeated momentum deterioration before a momentum-only exit', () 
   assert.match(third.decision.reason, /momentum deterioration/);
   assert.equal(manager.get('POS-1')?.state, 'EXIT_SIGNAL');
 });
+
+test('ratchets dynamic profit lock upward and ignores early trailing exits', () => {
+  const manager = new PositionManager();
+  openPosition(manager);
+
+  const first = manager.updateMarket('POS-1', { priceUsd: 1.15, momentum: 90, volumeAcceleration: 0, timestamp: 2 });
+  assert.notEqual(first.decision.action, 'SELL');
+  assert.ok(Math.abs((manager.getProfitLockPrice('POS-1') ?? 0) - 1.0925) < 1e-9);
+
+  const second = manager.updateMarket('POS-1', { priceUsd: 1.20, momentum: 85, volumeAcceleration: 0, timestamp: 3 });
+  assert.notEqual(second.decision.action, 'SELL');
+  assert.ok(Math.abs((manager.getProfitLockPrice('POS-1') ?? 0) - 1.14) < 1e-9);
+
+  const protectedPullback = manager.updateMarket('POS-1', { priceUsd: 1.16, momentum: 45, volumeAcceleration: -30, timestamp: 4 });
+  assert.notEqual(protectedPullback.decision.action, 'SELL');
+  assert.equal(manager.get('POS-1')?.state, 'TRAILING');
+
+  const lockedExit = manager.updateMarket('POS-1', { priceUsd: 1.139, momentum: 45, volumeAcceleration: -30, timestamp: 5 });
+  assert.equal(lockedExit.decision.action, 'SELL');
+  assert.match(lockedExit.decision.reason, /dynamic profit lock breached/);
+});
