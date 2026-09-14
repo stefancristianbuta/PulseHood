@@ -40,20 +40,78 @@ export class PaperTradingRuntime {
   stopEntries(): void { this.positions.emergencyStopEntries(); }
   closeAll(): Position[] { return this.positions.emergencyCloseAll(); }
 
-  private async tick(): Promise<void> { try { const block = await this.client.getBlockNumber(); this.lastBlock = block; const result = await this.ingest.poll(block, 25n); if (result === undefined) return; if (result.swaps.length > 0) console.log(JSON.stringify({ event: 'paper_strategy_swaps_received', count: result.swaps.length, fromBlock: result.fromBlock.toString(), toBlock: result.toBlock.toString() })); for (const swap of result.swaps) { const key = `${swap.transactionHash}:${swap.logIndex}`; if (this.seen.has(key)) continue; this.seen.add(key); if (this.seen.size > 5000) { const oldest = this.seen.values().next().value; if (typeof oldest === 'string') this.seen.delete(oldest); } await this.processSwap(swap); } await this.markToMarket(); } catch (error) { console.warn(JSON.stringify({ event: 'paper_strategy_error', message: error instanceof Error ? error.message : String(error) })); } }
+  private reject(swap: ReturnType<RadarIngest['getRecentSwaps']>[number], reason: string, payload: Record<string, unknown> = {}): void {
+    this.telemetry.emitEvent({
+      correlationId: TelemetryBus.correlationId('CANDIDATE'),
+      module: 'strategy',
+      event: 'paper_candidate_rejected',
+      token: swap.targetToken,
+      block: this.lastBlock,
+      status: 'warning',
+      payload: { reason, protocol: swap.protocol, pool: swap.pool, direction: swap.direction, quoteToken: swap.quoteToken, ...payload },
+    });
+  }
+
+  private async tick(): Promise<void> {
+    try {
+      const block = await this.client.getBlockNumber();
+      this.lastBlock = block;
+      const result = await this.ingest.poll(block, 25n);
+      if (result === undefined) return;
+      if (result.swaps.length > 0) console.log(JSON.stringify({ event: 'paper_strategy_swaps_received', count: result.swaps.length, fromBlock: result.fromBlock.toString(), toBlock: result.toBlock.toString() }));
+      for (const swap of result.swaps) {
+        const key = `${swap.transactionHash}:${swap.logIndex}`;
+        if (this.seen.has(key)) continue;
+        this.seen.add(key);
+        if (this.seen.size > 5000) { const oldest = this.seen.values().next().value; if (typeof oldest === 'string') this.seen.delete(oldest); }
+        await this.processSwap(swap);
+      }
+      await this.markToMarket();
+    } catch (error) {
+      console.warn(JSON.stringify({ event: 'paper_strategy_error', message: error instanceof Error ? error.message : String(error) }));
+      this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('STRATEGY'), module: 'strategy', event: 'paper_strategy_error', block: this.lastBlock, status: 'error', payload: { message: error instanceof Error ? error.message : String(error) } });
+    }
+  }
 
   private async processSwap(swap: ReturnType<RadarIngest['getRecentSwaps']>[number]): Promise<void> {
-    if (swap.status !== 'normalized' || swap.trader === undefined || swap.direction === 'UNKNOWN' || swap.amountIn === undefined || swap.amountOut === undefined) return;
-    const market = await this.readMarket(swap.protocol, swap.pool, swap.targetToken, swap.quoteToken); if (market === undefined || market.priceUsd <= 0) return;
-    const quoteAmountRaw = swap.direction === 'BUY' ? swap.amountIn : swap.amountOut; const quoteUsd = this.quoteToUsd(swap.quoteToken, quoteAmountRaw); if (quoteUsd <= 0) return;
-    const flow = this.flow.process({ swap, trader: swap.trader, volumeUsd: quoteUsd, priceUsd: market.priceUsd, timestampMs: Date.now() }); if (flow === undefined) return;
-    const liquidityScore = clamp((market.liquidityUsd / this.minLiquidityUsd) * 50, 0, 100); const riskScore = market.liquidityUsd >= this.minLiquidityUsd ? (market.liquidityUsd >= this.minLiquidityUsd * 4 ? 10 : 25) : 65; const breakoutScore = flow.priceChangePct >= 0.5 ? clamp(70 + flow.priceChangePct * 10, 70, 100) : 0;
+    if (swap.status !== 'normalized' || swap.trader === undefined || swap.direction === 'UNKNOWN' || swap.amountIn === undefined || swap.amountOut === undefined) {
+      this.reject(swap, 'invalid_normalized_swap');
+      return;
+    }
+    const market = await this.readMarket(swap.protocol, swap.pool, swap.targetToken, swap.quoteToken);
+    if (market === undefined || market.priceUsd <= 0) {
+      this.reject(swap, 'market_read_failed_or_invalid_price');
+      return;
+    }
+    const quoteAmountRaw = swap.direction === 'BUY' ? swap.amountIn : swap.amountOut;
+    const quoteUsd = this.quoteToUsd(swap.quoteToken, quoteAmountRaw);
+    if (quoteUsd <= 0) {
+      this.reject(swap, 'unsupported_or_zero_quote_usd', { quoteAmountRaw: quoteAmountRaw.toString() });
+      return;
+    }
+    const flow = this.flow.process({ swap, trader: swap.trader, volumeUsd: quoteUsd, priceUsd: market.priceUsd, timestampMs: Date.now() });
+    if (flow === undefined) {
+      this.reject(swap, 'flow_rejected', { quoteUsd });
+      return;
+    }
+    const liquidityScore = clamp((market.liquidityUsd / this.minLiquidityUsd) * 50, 0, 100);
+    const riskScore = market.liquidityUsd >= this.minLiquidityUsd ? (market.liquidityUsd >= this.minLiquidityUsd * 4 ? 10 : 25) : 65;
+    const breakoutScore = flow.priceChangePct >= 0.5 ? clamp(70 + flow.priceChangePct * 10, 70, 100) : 0;
     const signal = evaluateSignal({ flow, riskScore, liquidityScore, breakoutScore, liquidityUsd: market.liquidityUsd, minLiquidityUsd: this.minLiquidityUsd, minUniqueBuyerScore: MIN_UNIQUE_BUYER_SCORE });
-    this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('SIGNAL'), module: 'strategy', event: 'signal_evaluated', token: swap.targetToken, block: this.lastBlock, status: signal.entryQualified ? 'ok' : 'warning', payload: { signal: signal.signal, momentum: signal.momentum.score, risk: signal.risk.score, liquidityUsd: market.liquidityUsd, uniqueBuyers: flow.uniqueBuyers, buyPressurePct: flow.buyPressurePct, volumeAccelerationPct: flow.volumeAccelerationPct, breakoutScore, protocol: swap.protocol } });
-    if (!signal.entryQualified || !this.positions.canEnter()) return; if (this.positions.listOpen().some(position => position.token.toLowerCase() === swap.targetToken.toLowerCase())) return;
-    const best = chooseBestQuote([this.makePaperQuote(swap.targetToken, market.priceUsd, market.liquidityUsd)]); if (best === undefined) return; const correlationId = TelemetryBus.correlationId('ENTRY'); const opportunity = opportunityId(++this.sequence); const fill = await this.execution.buy({ side: 'BUY', token: swap.targetToken, amountUsd: this.entrySizeUsd, quote: best.quote, correlationId }); if (fill.fill.executedUsd <= 0) return;
+    this.telemetry.emitEvent({ correlationId: TelemetryBus.correlationId('SIGNAL'), module: 'strategy', event: 'signal_evaluated', token: swap.targetToken, block: this.lastBlock, status: signal.entryQualified ? 'ok' : 'warning', payload: { signal: signal.signal, momentum: signal.momentum.score, risk: signal.risk.score, liquidityUsd: market.liquidityUsd, uniqueBuyers: flow.uniqueBuyers, buyPressurePct: flow.buyPressurePct, volumeAccelerationPct: flow.volumeAccelerationPct, priceChangePct: flow.priceChangePct, breakoutScore, protocol: swap.protocol } });
+    if (!signal.entryQualified) { this.reject(swap, 'signal_not_entry_qualified', { signal: signal.signal, momentum: signal.momentum.score, risk: signal.risk.score, liquidityUsd: market.liquidityUsd, uniqueBuyers: flow.uniqueBuyers, buyPressurePct: flow.buyPressurePct, volumeAccelerationPct: flow.volumeAccelerationPct, priceChangePct: flow.priceChangePct, breakoutScore }); return; }
+    if (!this.positions.canEnter()) { this.reject(swap, 'entries_disabled'); return; }
+    if (this.positions.listOpen().some(position => position.token.toLowerCase() === swap.targetToken.toLowerCase())) { this.reject(swap, 'position_already_open'); return; }
+    const best = chooseBestQuote([this.makePaperQuote(swap.targetToken, market.priceUsd, market.liquidityUsd)]);
+    if (best === undefined) { this.reject(swap, 'no_executable_quote'); return; }
+    const correlationId = TelemetryBus.correlationId('ENTRY');
+    const opportunity = opportunityId(++this.sequence);
+    const fill = await this.execution.buy({ side: 'BUY', token: swap.targetToken, amountUsd: this.entrySizeUsd, quote: best.quote, correlationId });
+    if (fill.fill.executedUsd <= 0) { this.reject(swap, 'paper_fill_zero', { requestedUsd: this.entrySizeUsd }); return; }
     const position: Position = { id: `${opportunity}-POS`, opportunityId: opportunity, token: swap.targetToken, symbol: swap.targetToken.slice(0, 8), state: 'DISCOVERED', entryPriceUsd: market.priceUsd, currentPriceUsd: market.priceUsd, peakPriceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentumAtEntry: signal.momentum.score, momentumPeak: signal.momentum.score, openedAt: Date.now(), updatedAt: Date.now() };
-    this.positions.add(position); this.positions.transition(position.id, 'QUALIFIED'); this.positions.transition(position.id, 'SIGNAL'); this.positions.transition(position.id, 'ENTRY'); this.positions.transition(position.id, 'OPEN'); this.telemetry.emitEvent({ correlationId, module: 'positions', event: 'paper_position_opened', token: swap.targetToken, status: 'ok', payload: { positionId: position.id, opportunityId: opportunity, entryPriceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentum: signal.momentum.score } }); console.log(JSON.stringify({ event: 'paper_entry', positionId: position.id, token: swap.targetToken, priceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentum: signal.momentum.score }));
+    this.positions.add(position); this.positions.transition(position.id, 'QUALIFIED'); this.positions.transition(position.id, 'SIGNAL'); this.positions.transition(position.id, 'ENTRY'); this.positions.transition(position.id, 'OPEN');
+    this.telemetry.emitEvent({ correlationId, module: 'positions', event: 'paper_position_opened', token: swap.targetToken, status: 'ok', payload: { positionId: position.id, opportunityId: opportunity, entryPriceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentum: signal.momentum.score } });
+    console.log(JSON.stringify({ event: 'paper_entry', positionId: position.id, token: swap.targetToken, priceUsd: market.priceUsd, sizeUsd: fill.fill.executedUsd, momentum: signal.momentum.score }));
   }
 
   private async markToMarket(): Promise<void> { for (const position of this.positions.listOpen()) { const market = await this.readTokenMarket(position.token); if (market === undefined) continue; const flow = this.flow.process({ swap: { status: 'normalized', protocol: V2_PROTOCOL, eventName: 'mark', pool: '0x0000000000000000000000000000000000000000', transactionHash: '0x0000000000000000000000000000000000000000000000000000000000000000', logIndex: 0, direction: 'BUY', targetToken: position.token, quoteToken: USDG as Addr, amountIn: 1n, amountOut: 1n, trader: '0x0000000000000000000000000000000000000001', reason: undefined }, trader: '0x0000000000000000000000000000000000000001', volumeUsd: 1, priceUsd: market.priceUsd, timestampMs: Date.now() }); if (flow === undefined) continue; const momentum = evaluateSignal({ flow, riskScore: 10, liquidityScore: 100, breakoutScore: 70, liquidityUsd: market.liquidityUsd, minLiquidityUsd: this.minLiquidityUsd, minUniqueBuyerScore: MIN_UNIQUE_BUYER_SCORE }).momentum.score; const update = this.positions.updateMarket(position.id, { priceUsd: market.priceUsd, momentum, volumeAcceleration: flow.volumeAccelerationPct, timestamp: Date.now() }); if (update.decision.action === 'SELL') { const best = chooseBestQuote([this.makePaperQuote(position.token, market.priceUsd, market.liquidityUsd)]); if (best === undefined) continue; await this.execution.sell({ side: 'SELL', token: position.token, amountUsd: position.sizeUsd, quote: best.quote, correlationId: TelemetryBus.correlationId('EXIT') }); this.positions.close(position.id); console.log(JSON.stringify({ event: 'paper_exit', positionId: position.id, priceUsd: market.priceUsd, reason: update.decision.reason })); } } }
