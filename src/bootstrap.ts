@@ -3,10 +3,8 @@ import { RadarIngest } from './radar-ingest.js';
 import { RpcManager } from './rpc.js';
 import { TelemetryBus } from './telemetry.js';
 import { PaperTradingRuntime } from './trading-runtime.js';
+import { ActivityLedger } from './activity-ledger.js';
 
-// The dashboard no longer creates a RadarIngest instance. The old prototype guard
-// therefore disabled the runtime's own poll() by mistake. Keep one explicit ingest
-// owner here: PaperTradingRuntime.
 await import('./index.js');
 const dashboard = (globalThis as typeof globalThis & { __pulsehood?: {
   entriesEnabled: boolean;
@@ -18,10 +16,13 @@ const dashboard = (globalThis as typeof globalThis & { __pulsehood?: {
   latestBlock?: bigint;
   swapsReceived: number;
   candidates: Map<string, Record<string, unknown>>;
+  activityLedger?: ActivityLedger;
 } }).__pulsehood;
 const config = loadConfig();
 const telemetry = new TelemetryBus();
 const rpc = new RpcManager(config.rpcUrls, telemetry, config.maxRpcLatencyMs, config.maxBlockLag);
+const activityLedger = new ActivityLedger();
+if (dashboard !== undefined) dashboard.activityLedger = activityLedger;
 
 function updateCandidate(event: Parameters<TelemetryBus['emitEvent']>[0]): void {
   if (dashboard === undefined || event.token === undefined) return;
@@ -62,6 +63,7 @@ telemetry.onEvent((event) => {
   if (dashboard === undefined) return;
   if (event.block !== undefined) dashboard.latestBlock = event.block;
   if (event.event === 'signal_evaluated' || event.event === 'paper_candidate_rejected') updateCandidate(event);
+  activityLedger.onEvent(event);
 });
 
 async function start(): Promise<void> {
